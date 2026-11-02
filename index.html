@@ -197,19 +197,21 @@ function computeWinners(tickets, rnd) {
 
 // ナビ
 function renderNav() {
-  const h = (location.hash || "#public").slice(1);
+  const hRaw = (location.hash || "#public").slice(1);
+  const h = hRaw.startsWith("trade-") ? "trade" : hRaw;
   const link = (hash, label) => `<a href="#${hash}" class="${h === hash ? "on" : ""}">${label}</a>`;
-  if (!session) $nav.innerHTML = link("public", "📊 みんなの実績") + link("claim", "🕹 自販機で買った方") + link("login", "🔑 販売員ログイン");
+  if (!session) $nav.innerHTML = link("public", "📊 みんなの実績") + link("claim", "🕹 自販機で買った方") + link("trade", "🤝 MM取引") + link("login", "🔑 販売員ログイン");
   else if (!profile || !profile.active) $nav.innerHTML = `<span class="badge">${esc(profile?.username || "")}：有効化まち</span><button class="sub" onclick="logout()">ログアウト</button>`;
-  else $nav.innerHTML = link("app", "🏠 ホーム") + link("sell", "🎟 売る") + link("lots", "🕹 自販機") + link("donations", "🎁 寄付") + link("numbers", "🔢 番号一覧") + link("winners", "🏆 当選・引換") + link("manage", "🛠 券の管理") + link("book", "📖 本") + link("proposals", "🤝 提案") + link("mm", "💱 MM")
+  else $nav.innerHTML = link("app", "🏠 ホーム") + link("sell", "🎟 売る") + link("lots", "🕹 自販機") + link("donations", "🎁 寄付") + link("numbers", "🔢 番号一覧") + link("winners", "🏆 当選・引換") + link("manage", "🛠 券の管理") + link("book", "📖 本") + link("proposals", "🤝 提案") + link("mm", "💱 MM") + link("trade", "🤝 MM取引")
     + (profile.role === "admin" ? link("rounds", "回・設定") + link("users", "販売員") + link("audit", "記録") : "")
     + `<span class="badge">${esc(profile.username)}</span><button class="sub" onclick="logout()">ログアウト</button>`;
 }
 function renderTabbar() {
-  const h = (location.hash || "#public").slice(1);
+  const hRaw = (location.hash || "#public").slice(1);
+  const h = hRaw.startsWith("trade-") ? "trade" : hRaw;
   const tab = (hash, ic, label) => `<a href="#${hash}" class="${h === hash ? "on" : ""}"><span class="ic">${ic}</span>${label}</a>`;
   const el = document.getElementById("tabbar");
-  if (!session) el.innerHTML = tab("public", "📊", "実績") + tab("claim", "🕹", "自販機") + tab("login", "🔑", "ログイン");
+  if (!session) el.innerHTML = tab("public", "📊", "実績") + tab("claim", "🕹", "自販機") + tab("trade", "🤝", "取引") + tab("login", "🔑", "ログイン");
   else if (!profile || !profile.active) el.innerHTML = tab("public", "📊", "実績") + tab("claim", "🕹", "自販機");
   else el.innerHTML = tab("app", "🏠", "ホーム") + tab("sell", "🎟", "売る") + tab("lots", "🕹", "自販機") + tab("winners", "🏆", "当選") + tab("book", "📖", "本") + tab("proposals", "🤝", "提案") + tab("mm", "💱", "MM") + tab("more", "☰", "その他");
 }
@@ -1196,6 +1198,13 @@ async function viewMM(m = "", ok = true) {
     <p><button type="button" class="sub" onclick="doMMPublicUpdate()">🌐 公開スナップショットを更新</button>
     <button type="button" class="sub" onclick="doMMCopyPublicText(this)">📋 公開用テキストをコピー</button></p>
     <p class="hint">公開用テキストは Wiki などに貼って残すためのものです。先端ハッシュを台帳の外に残すと、後から台帳を書き換えても検出できます。</p></div>`;
+  h += `<div class="card"><h3>🏦 プレイヤー残高への預かり / 払い戻し</h3>
+  <p class="hint">プレイヤーから現物の MM を受け取ったら「預かり」（残高が増えます）、残高ぶんの現物 MM を渡したら「払い戻し」（残高が減ります）。記録は送金台帳（公開）に残ります。</p>
+  <label class="f">プレイヤーの Minecraft ID</label><input id="mm_op_player" maxlength="16" placeholder="例: Steve_123">
+  <label class="f">金額 (MM)</label><input id="mm_op_amount" type="number" min="1" value="10">
+  <label class="f">メモ（任意）</label><input id="mm_op_note" maxlength="200" placeholder="例: 対面で受取">
+  <p><button type="button" onclick="doMMOperatorTransfer('deposit')">🏦 預かり（現物を受け取る）</button>
+  <button type="button" class="sub" onclick="doMMOperatorTransfer('withdraw')">💸 払い戻し（現物を渡す）</button></p></div>`;
   h += `<div class="card"><h3>両替する（レート 1D = 1MM）</h3>
   <label class="f">自販機</label><select id="mm_machine">${activeMachines.map(mc => `<option value="${mc.id}">${esc(mc.name)}（${esc(mc.location)}）… ダイヤ ${mc.dia_stock} / MM ${mc.mm_stock}</option>`).join("")}</select>
   <label class="f">方向</label>
@@ -1338,6 +1347,27 @@ async function doMMAuditExecute() { // 棚卸し: 差分をチェーンに記録
     viewMM(`${esc(mc.name)} の棚卸しを記録しました（在庫を実数に合わせました）`);
   } catch (e) { window._mmAudit = null; viewMM(esc(e.message), false); }
 }
+async function doMMOperatorTransfer(kind) { // 運営による預かり / 払い戻し (mm_operator_transfer RPC)
+  try {
+    const player = (document.getElementById("mm_op_player")?.value || "").trim();
+    if (!/^[A-Za-z0-9_]{1,16}$/.test(player)) throw new Error("プレイヤーの Minecraft ID を入れてください（半角の英数字と _ 、16文字まで）");
+    const n = parseInt(document.getElementById("mm_op_amount")?.value, 10);
+    if (!Number.isInteger(n) || n < 1) throw new Error("金額は1以上の整数で入れてください");
+    const note = (document.getElementById("mm_op_note")?.value || "").trim();
+    const text = kind === "deposit"
+      ? `${player} さんから現物 ${n}MM を受け取り、残高に ${n}MM を入れます。よろしいですか？`
+      : `${player} さんの残高から ${n}MM を減らし、現物 ${n}MM を渡します。よろしいですか？`;
+    if (!confirm(text)) return;
+    const args = kind === "deposit"
+      ? {p_from: "OPERATOR", p_to: player, p_amount: n, p_kind: "deposit", p_note: note}
+      : {p_from: player, p_to: "OPERATOR", p_amount: n, p_kind: "withdraw", p_note: note};
+    const {data, error} = await sb.rpc("mm_operator_transfer", args);
+    if (error) throw new Error(error.message);
+    if (!data?.ok) throw new Error(MMT_ERR_JP[data?.error] || `エラー: ${data?.error || "不明"}`);
+    await audit(kind === "deposit" ? "mm_deposit" : "mm_withdraw", `player=${player} amount=${n} note=${note}`);
+    viewMM(kind === "deposit" ? `${esc(player)} さんの残高に ${n}MM を預かりました` : `${esc(player)} さんに ${n}MM を払い戻しました`);
+  } catch (e) { viewMM(esc(e.message), false); }
+}
 async function doMMPublicUpdate() { // 公開ページ用のスナップショット (mm_public id=1) を更新する
   try {
     const st = window._mmState;
@@ -1356,6 +1386,253 @@ async function doMMCopyPublicText(btn) { // Wiki 等に貼る公開用テキス�
   await copyBookText(mmPublicText({date, circulating: st.circulating, diaTotal: st.diaTotal, mmStockTotal: st.mmStockTotal, chainCount: st.chainCount, headHash: st.headHash, verifyText: st.verifyText}), btn);
 }
 
+// ---- めうまねー (MM) 個人間取引・送金 ----
+// 本人確認は MCID + PIN を RPC (mm_*) に渡す方式。PIN はメモリ内だけに保持し、ストレージには保存しない。
+// 送金台帳 mm_transfers は公開され、自前のハッシュチェーン MMTCHAINv1 を持つ。
+// record_hash = SHA-256("MMTCHAINv1|{chain_seq}|{prev_hash}|{from_player}|{to_player}|{amount}|{kind}|{offer_id or ''}|{note}")、先頭行の prev_hash は "GENESIS-MMT"。
+const MMT_GENESIS = "GENESIS-MMT";
+const MMT_ERR_JP = {
+  locked: "試行が多すぎます。時間をおいてから試してください",
+  not_registered: "まだ登録がありません",
+  bad_pin: "暗証番号が違います",
+  bad_pin_format: "暗証番号は数字4〜8桁で入力してください",
+  bad_mcid: "IDの形式が違います",
+  already_registered: "そのIDは登録ずみです",
+  insufficient: "残高が足りません",
+  not_open: "もう終わった取引です",
+  own_offer: "自分の出品です",
+  own_account: "自分には送れません",
+  recipient_not_registered: "相手が未登録です",
+  bad_input: "入力が違います",
+  not_member: "権限がありません"
+};
+const MMT_KIND_JP = {send: "送金", trade: "取引", deposit: "預かり", withdraw: "払い戻し"};
+let tradePlayer = null;      // ログイン中だけ {mcid, pin} を保持する (PIN はメモリのみ)
+let tradeFocusId = null;     // #trade-<uuid> で開いたときの対象出品
+let tradeSideFilter = "all"; // 掲示板の絞り込み: all | sell | buy
+let tradeOfferSide = "sell"; // 出品フォームの向き: sell | buy
+function mmtChainString(r) {
+  return ["MMTCHAINv1", r.chain_seq, r.prev_hash ?? "", r.from_player ?? "", r.to_player ?? "", r.amount, r.kind ?? "", r.offer_id ?? "", r.note ?? ""].join("|");
+}
+function mmtBalanceOf(transfers, mcid) { // 残高 = その人への入金合計 - 出金合計 (単体テスト対象)
+  let b = 0;
+  for (const t of transfers) { if (t.to_player === mcid) b += t.amount || 0; if (t.from_player === mcid) b -= t.amount || 0; }
+  return b;
+}
+async function verifyMMTChain(rows) { // rows は chain_seq 昇順。{ok:true,count,head} か {ok:false,atSeq,why}
+  let prev = MMT_GENESIS;
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    if (r.chain_seq !== i + 1) return {ok: false, atSeq: r.chain_seq, why: "連番が飛んでいます"};
+    if (r.prev_hash !== prev) return {ok: false, atSeq: r.chain_seq, why: "前のレコードとつながっていません"};
+    if (await sha256Hex(mmtChainString(r)) !== r.record_hash) return {ok: false, atSeq: r.chain_seq, why: "ハッシュが合いません (書き換えられた可能性)"};
+    prev = r.record_hash;
+  }
+  return {ok: true, count: rows.length, head: rows.length ? rows[rows.length - 1].record_hash : ""};
+}
+async function fetchMMTransfers() { // 送金台帳を全件取得 (id 昇順)。残高・履歴・チェーン検証に使う
+  const all = [], PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const {data, error} = await sb.from("mm_transfers").select("*").order("id", {ascending: true}).range(from, from + PAGE - 1);
+    if (error) throw error;
+    all.push(...data);
+    if (data.length < PAGE) break;
+  }
+  return all;
+}
+async function mmRpc(name, args) { // RPC の戻り値 jsonb をそのまま返す。通信エラーだけ throw する
+  const {data, error} = await sb.rpc(name, args);
+  if (error) throw new Error(error.message);
+  return data;
+}
+function mmtErrText(code) { return MMT_ERR_JP[code] || `エラーが発生しました (${code || "不明"})`; }
+function tradeOfferCard(o, focus = false) {
+  const sideLabel = o.side === "sell" ? "売りたい" : "買いたい";
+  const link = `${location.origin}${location.pathname}#trade-${o.id}`;
+  return `<div style="border:1px solid var(--line2);border-radius:12px;padding:12px;margin:10px 0">
+    <div><b>${sideLabel}</b> <span class="small">${fmtTime(o.created_at)}</span></div>
+    <div style="font-size:${focus ? 22 : 17}px;margin:4px 0"><b>${esc(o.item)}</b> × ${o.qty}　<b>${o.price_mm} MM</b></div>
+    <div class="small">出品者: ${esc(o.poster)}${o.note ? `<br>メモ: ${esc(o.note)}` : ""}</div>
+    <p style="margin:8px 0 0"><button type="button" class="sub" onclick="copyBookText('${link}', this)">リンクをコピー</button>
+    ${focus ? "" : `<button type="button" class="sub" onclick="location.hash='trade-${o.id}'">取引する</button>`}</p></div>`;
+}
+async function viewTrade(m = "", ok = true) {
+  let offers = [], focus = null, transfers = [], chainRes = null, myOffers = [];
+  try {
+    const [offRes, tr] = await Promise.all([
+      sb.from("mm_offers").select("*").eq("status", "open").order("created_at", {ascending: false}).limit(100),
+      fetchMMTransfers()
+    ]);
+    if (offRes.error) throw offRes.error;
+    offers = offRes.data || [];
+    transfers = tr;
+    chainRes = await verifyMMTChain(transfers.filter(t => t.chain_seq != null).sort((a, b) => a.chain_seq - b.chain_seq));
+    if (tradeFocusId) {
+      const {data} = await sb.from("mm_offers").select("*").eq("id", tradeFocusId).single();
+      focus = data || null;
+    }
+    if (tradePlayer) {
+      const {data} = await sb.from("mm_offers").select("*").eq("poster", tradePlayer.mcid).order("created_at", {ascending: false}).limit(20);
+      myOffers = data || [];
+    }
+  } catch (e) {
+    $main.innerHTML = msg(m, ok) + `<div class="card"><h2>MM取引</h2><p class="err">読み込めませんでした: ${esc(e.message)}</p><p class="hint">取引テーブル (mm_offers / mm_transfers) がまだ用意されていない可能性があります。</p></div>`;
+    return;
+  }
+  const me = tradePlayer;
+  const balance = me ? mmtBalanceOf(transfers, me.mcid) : 0;
+  let h = msg(m, ok) + `<h2>MM取引 (めうまねー)</h2>
+  <p class="hint">プレイヤー同士で MM を送金したり、アイテム取引の代金を MM で決済したりするためのページです。アイテムの受け渡しはゲーム内で行い、MM の支払いだけがここで確定します。出品のリンクを Discord などに貼って使うことを想定しています。</p>`;
+  // リンクから開いた出品の詳細
+  if (tradeFocusId) {
+    h += `<div class="card" id="trade_detail"><h3>出品の詳細</h3>`;
+    if (!focus) h += `<p class="err">指定された出品は見つかりません。</p>`;
+    else {
+      h += tradeOfferCard(focus, true);
+      if (focus.status === "open") {
+        h += focus.side === "sell"
+          ? `<p class="hint">${esc(focus.poster)} さんが売っている出品です。取引すると、あなたから ${esc(focus.poster)} さんへ ${focus.price_mm}MM が送金されます。アイテムはゲーム内で受け取ってください。</p>`
+          : `<p class="hint">${esc(focus.poster)} さんが買いたがっている出品です。取引すると、${esc(focus.poster)} さんからあなたへ ${focus.price_mm}MM が送金されます。アイテムはゲーム内で渡してください。</p>`;
+        h += me
+          ? (focus.poster === me.mcid
+            ? `<p class="hint">これは自分の出品です。</p>`
+            : `<p><button type="button" onclick="doTradeAccept('${focus.id}')">この内容で取引する (${focus.price_mm}MM)</button></p>`)
+          : `<p class="hint">取引するには、下のプレイヤー情報で登録・ログインしてください。</p>`;
+      } else h += `<p class="hint">この出品は${focus.status === "done" ? "取引成立ずみ" : "取り消しずみ"}です${focus.partner ? ` (相手: ${esc(focus.partner)})` : ""}。</p>`;
+    }
+    h += `<p><a href="#trade">掲示板にもどる</a></p></div>`;
+  }
+  // プレイヤーパネル
+  h += `<div class="card"><h3>プレイヤー情報</h3>`;
+  if (!me) {
+    h += `<label class="f">Minecraft ID</label><input id="tp_mcid" maxlength="16" placeholder="例: Steve_123" value="${esc(localStorage.getItem("mm_trade_mcid") || "")}">
+    <label class="f">暗証番号 (数字4〜8桁)</label><input id="tp_pin" type="password" inputmode="numeric" autocomplete="off" maxlength="8">
+    <p><button type="button" onclick="doTradeLogin()">ログイン</button>
+    <button type="button" class="sub" onclick="doTradeRegister()">はじめて登録</button></p>
+    <p class="hint">暗証番号は使い回さないでください (他のサービスと同じものにしない)。このページの暗証番号はメモリ内だけに保持され、保存されません。アイテムの受け渡しはゲーム内で行ってください。MM の支払いだけがここで確定します。</p>`;
+  } else {
+    h += `<p><b>${esc(me.mcid)}</b>　残高: <b>${balance} MM</b>　<button type="button" class="sub" onclick="doTradeLogout()">ログアウト</button></p>
+    <h3 style="margin-top:16px">送金</h3>
+    <label class="f">相手の Minecraft ID</label><input id="tp_to" maxlength="16" placeholder="例: Alex_9">
+    <label class="f">金額 (MM)</label><input id="tp_amount" type="number" min="1" value="10">
+    <label class="f">メモ (任意)</label><input id="tp_note" maxlength="200">
+    <p><button type="button" onclick="doTradeSend()">送金する</button></p>
+    <h3 style="margin-top:16px">出品する</h3>
+    <div class="seg"><button type="button" class="${tradeOfferSide === "sell" ? "on" : ""}" onclick="tradeOfferSide='sell';viewTrade()">売りたい</button><button type="button" class="${tradeOfferSide === "buy" ? "on" : ""}" onclick="tradeOfferSide='buy';viewTrade()">買いたい</button></div>
+    <label class="f">アイテム名</label><input id="tp_item" maxlength="80" placeholder="例: ダイヤモンド">
+    <label class="f">個数</label><input id="tp_qty" type="number" min="1" value="1">
+    <label class="f">合計価格 (MM)</label><input id="tp_price" type="number" min="1" value="10">
+    <label class="f">メモ (任意)</label><input id="tp_onote" maxlength="200" placeholder="例: 取引板で声をかけてください">
+    <p><button type="button" onclick="doTradeCreateOffer()">出品する</button></p>
+    <p class="hint">${tradeOfferSide === "buy" ? "「買いたい」出品には残高が必要です (支払いは取引成立時に行われます)。" : "「売りたい」出品は、相手が取引した時点で代金が残高に入ります。"}</p>
+    <h3 style="margin-top:16px">自分の出品</h3>`;
+    if (!myOffers.length) h += `<p class="hint">まだありません。</p>`;
+    else h += myOffers.map(o => `<div style="border:1px solid var(--line2);border-radius:12px;padding:10px;margin:8px 0">
+      <b>${o.side === "sell" ? "売りたい" : "買いたい"}</b> ${esc(o.item)} × ${o.qty}　<b>${o.price_mm} MM</b>
+      <span class="small">${o.status === "open" ? "受付中" : o.status === "done" ? `成立 (相手: ${esc(o.partner)})` : "取り消し"} ／ ${fmtTime(o.created_at)}</span>
+      ${o.status === "open" ? `<p style="margin:6px 0 0"><button type="button" class="sub" onclick="copyBookText('${location.origin}${location.pathname}#trade-${o.id}', this)">リンクをコピー</button> <button type="button" class="sub" onclick="doTradeCancel('${o.id}')">取り消す</button></p>` : ""}</div>`).join("");
+    const mine = transfers.filter(t => t.from_player === me.mcid || t.to_player === me.mcid).slice(-20).reverse();
+    h += `<h3 style="margin-top:16px">自分の取引履歴 (直近20件)</h3>`;
+    if (!mine.length) h += `<p class="hint">まだありません。</p>`;
+    else h += `<div class="scroll"><table><tr><th>時刻</th><th>種別</th><th>相手</th><th>金額</th><th>メモ</th></tr>${mine.map(t => {
+      const inTx = t.to_player === me.mcid;
+      const other = t.from_player === "OPERATOR" || t.to_player === "OPERATOR" ? "運営" : (inTx ? t.from_player : t.to_player);
+      return `<tr><td>${fmtTime(t.created_at)}</td><td>${MMT_KIND_JP[t.kind] || esc(t.kind)}</td><td>${esc(other)}</td><td>${inTx ? "+" : "-"}${t.amount} MM</td><td>${esc(t.note)}</td></tr>`;
+    }).join("")}</table></div>`;
+  }
+  h += `</div>`;
+  // 掲示板
+  const shown = offers.filter(o => tradeSideFilter === "all" || o.side === tradeSideFilter);
+  h += `<div class="card"><h3>取引掲示板 (受付中 ${offers.length} 件)</h3>
+  <div class="seg"><button type="button" class="${tradeSideFilter === "all" ? "on" : ""}" onclick="tradeSideFilter='all';viewTrade()">すべて</button><button type="button" class="${tradeSideFilter === "sell" ? "on" : ""}" onclick="tradeSideFilter='sell';viewTrade()">売りたい</button><button type="button" class="${tradeSideFilter === "buy" ? "on" : ""}" onclick="tradeSideFilter='buy';viewTrade()">買いたい</button></div>`;
+  if (!shown.length) h += `<p class="hint">表示する出品がありません。</p>`;
+  else h += shown.map(o => tradeOfferCard(o)).join("");
+  h += `</div>`;
+  h += `<div class="card"><h3>送金チェーン (改ざん検知)</h3>
+  ${chainRes && chainRes.ok ? `<p class="ok">送金チェーン: 検証OK (${chainRes.count}件)</p>` : `<p class="err">送金チェーン: 検証で異常が見つかりました${chainRes ? ` (#${chainRes.atSeq}: ${esc(chainRes.why || "不一致")})` : ""}</p>`}
+  <p class="hint">送金台帳は全件公開され、ハッシュチェーンでつながっています。残高はこの台帳の合算です。</p></div>`;
+  $main.innerHTML = h;
+  if (tradeFocusId) document.getElementById("trade_detail")?.scrollIntoView();
+}
+function tradeCredentials() { // プレイヤーパネルの入力を読む。{mcid, pin} か null (呼び出し側でエラー表示)
+  const mcid = (document.getElementById("tp_mcid")?.value || "").trim();
+  const pin = document.getElementById("tp_pin")?.value || "";
+  return {mcid, pin};
+}
+async function doTradeRegister() {
+  try {
+    const {mcid, pin} = tradeCredentials();
+    const data = await mmRpc("mm_register_player", {p_mcid: mcid, p_pin: pin});
+    if (!data?.ok) return viewTrade(mmtErrText(data?.error), false);
+    const login = await mmRpc("mm_login", {p_mcid: mcid, p_pin: pin});
+    if (!login?.ok) return viewTrade("登録しました。ログインしてください。", true);
+    tradePlayer = {mcid, pin};
+    localStorage.setItem("mm_trade_mcid", mcid);
+    viewTrade(`登録とログインが完了しました。残高は ${login.balance ?? 0}MM です。`);
+  } catch (e) { viewTrade(esc(e.message), false); }
+}
+async function doTradeLogin() {
+  try {
+    const {mcid, pin} = tradeCredentials();
+    const data = await mmRpc("mm_login", {p_mcid: mcid, p_pin: pin});
+    if (!data?.ok) return viewTrade(mmtErrText(data?.error), false);
+    tradePlayer = {mcid, pin};
+    localStorage.setItem("mm_trade_mcid", mcid);
+    viewTrade(`ログインしました。残高は ${data.balance ?? 0}MM です。`);
+  } catch (e) { viewTrade(esc(e.message), false); }
+}
+function doTradeLogout() { tradePlayer = null; viewTrade("ログアウトしました。"); }
+async function doTradeSend() {
+  if (!tradePlayer) return viewTrade("先にログインしてください。", false);
+  try {
+    const to = (document.getElementById("tp_to")?.value || "").trim();
+    const amount = parseInt(document.getElementById("tp_amount")?.value, 10);
+    const note = (document.getElementById("tp_note")?.value || "").trim();
+    if (!Number.isInteger(amount) || amount < 1) throw new Error("金額は1以上の整数で入力してください");
+    if (!confirm(`${to} へ ${amount}MM を送金します。よろしいですか？`)) return;
+    const data = await mmRpc("mm_send", {p_mcid: tradePlayer.mcid, p_pin: tradePlayer.pin, p_to: to, p_amount: amount, p_note: note});
+    if (!data?.ok) return viewTrade(mmtErrText(data?.error), false);
+    viewTrade(`${esc(to)} へ ${amount}MM を送金しました。残高は ${data.balance ?? ""}MM です。`);
+  } catch (e) { viewTrade(esc(e.message), false); }
+}
+async function doTradeCreateOffer() {
+  if (!tradePlayer) return viewTrade("先にログインしてください。", false);
+  try {
+    const item = (document.getElementById("tp_item")?.value || "").trim();
+    const qty = parseInt(document.getElementById("tp_qty")?.value, 10);
+    const price = parseInt(document.getElementById("tp_price")?.value, 10);
+    const note = (document.getElementById("tp_onote")?.value || "").trim();
+    const data = await mmRpc("mm_create_offer", {p_mcid: tradePlayer.mcid, p_pin: tradePlayer.pin, p_side: tradeOfferSide, p_item: item, p_qty: qty, p_price: price, p_note: note});
+    if (!data?.ok) return viewTrade(mmtErrText(data?.error), false);
+    tradeFocusId = data.id;
+    viewTrade("出品しました。リンクを Discord などに貼って使ってください。");
+  } catch (e) { viewTrade(esc(e.message), false); }
+}
+async function doTradeAccept(id) {
+  if (!tradePlayer) return viewTrade("先にログインしてください。", false);
+  try {
+    const {data: o} = await sb.from("mm_offers").select("*").eq("id", id).single();
+    if (!o || o.status !== "open") return viewTrade("もう終わった取引です", false);
+    const text = o.side === "sell"
+      ? `${o.poster} の「${o.item} ×${o.qty}」を ${o.price_mm}MM で買います。支払いが確定します。アイテムはゲーム内で受け取ってください。実行しますか？`
+      : `${o.poster} に「${o.item} ×${o.qty}」を売ります。${o.price_mm}MM が残高に入ります。アイテムはゲーム内で渡してください。実行しますか？`;
+    if (!confirm(text)) return;
+    const data = await mmRpc("mm_accept_offer", {p_mcid: tradePlayer.mcid, p_pin: tradePlayer.pin, p_offer: id});
+    if (!data?.ok) return viewTrade(mmtErrText(data?.error), false);
+    viewTrade(`取引が成立しました。${esc(data.from)} から ${esc(data.to)} へ ${data.amount}MM が送金されました。`);
+  } catch (e) { viewTrade(esc(e.message), false); }
+}
+async function doTradeCancel(id) {
+  if (!tradePlayer) return viewTrade("先にログインしてください。", false);
+  try {
+    if (!confirm("この出品を取り消します。よろしいですか？")) return;
+    const data = await mmRpc("mm_cancel_offer", {p_mcid: tradePlayer.mcid, p_pin: tradePlayer.pin, p_offer: id});
+    if (!data?.ok) return viewTrade(mmtErrText(data?.error), false);
+    if (tradeFocusId === id) tradeFocusId = null;
+    viewTrade("出品を取り消しました。");
+  } catch (e) { viewTrade(esc(e.message), false); }
+}
+
 // ---- その他メニュー（スマホ用） ----
 function viewMore() {
   const item = (hash, label, desc) => `<a href="#${hash}" style="display:block;color:var(--txt);text-decoration:none;padding:14px 4px;border-bottom:1px solid var(--line2)"><b>${label}</b><br><span class="small">${desc}</span></a>`;
@@ -1364,6 +1641,7 @@ function viewMore() {
   ${item("donations", "🎁 寄付", "寄付の受付と残り枚数")}
   ${item("manage", "🛠 券の管理", "無効化と譲渡")}
   ${item("mm", "💱 MM両替", "めうまねー (MM) の発行・還元と自販機の在庫")}
+  ${item("trade", "🤝 MM取引", "プレイヤー同士の MM 送金とアイテム取引の掲示板")}
   ${item("public", "📊 みんなの実績", "公開ページを見る")}
   ${profile.role === "admin" ? item("rounds", "⚙ 回・設定", "回の作成と状態変更") + item("users", "👥 販売員", "有効化と役割") + item("audit", "📝 記録", "操作ログ") : ""}
   </div>`;
@@ -1371,10 +1649,12 @@ function viewMore() {
 
 // ---- ルータ ----
 async function render() {
-  const hash = (location.hash || "#public").slice(1);
+  const rawHash = (location.hash || "#public").slice(1);
+  const hash = rawHash.startsWith("trade-") ? "trade" : rawHash;
+  tradeFocusId = rawHash.startsWith("trade-") ? rawHash.slice(6) : null;
   renderNav(); renderTabbar();
-  if (!session && !["public", "claim", "login", "register"].includes(hash)) { location.hash = "#public"; return; }
-  if (session && profile && !profile.active && !["public", "claim"].includes(hash)) {
+  if (!session && !["public", "claim", "login", "register", "trade"].includes(hash)) { location.hash = "#public"; return; }
+  if (session && profile && !profile.active && !["public", "claim", "trade"].includes(hash)) {
     $main.innerHTML = `<div class="card"><h2>もう少し待ってね</h2><p>アカウント「${esc(profile.username)}」は、まだ管理者に有効化されていません。有効化されたら使えるようになります。</p></div>`;
     return;
   }
@@ -1393,6 +1673,7 @@ async function render() {
     case "book": return viewBook();
     case "proposals": return viewProposals();
     case "mm": return viewMM();
+    case "trade": return viewTrade();
     case "more": return viewMore();
     case "rounds": return profile?.role === "admin" ? viewRounds() : viewApp();
     case "users": return profile?.role === "admin" ? viewUsers() : viewApp();
