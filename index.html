@@ -1,0 +1,629 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>節電鯖 宝くじ運営システム</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+body{font-family:system-ui,'Hiragino Sans',sans-serif;margin:0;background:#0f1512;color:#e8f0ea}
+a{color:#8fd694} header{background:#16241b;padding:12px 18px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+header b{font-size:18px} nav a,nav button{margin-right:10px}
+main{max-width:1080px;margin:0 auto;padding:18px}
+.card{background:#182420;border:1px solid #2a3d31;border-radius:10px;padding:16px;margin:14px 0}
+table{border-collapse:collapse;width:100%} th,td{border-bottom:1px solid #2a3d31;padding:6px 8px;text-align:left;font-size:14px}
+input,select,textarea{background:#0f1512;color:#e8f0ea;border:1px solid #3a5242;border-radius:6px;padding:8px;margin:3px 0}
+button,.btn{background:#2e7d43;color:#fff;border:0;border-radius:6px;padding:8px 14px;cursor:pointer;text-decoration:none;display:inline-block}
+button.danger{background:#a33} .btn.sub,button.sub{background:#33523d}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(86px,1fr));gap:8px}
+.cell{background:#101b14;border:1px solid #2a3d31;border-radius:8px;padding:8px;text-align:center}
+.cell.hot{border-color:#c9a227;background:#2a2410}.cell.win{border-color:#ffd94d;background:#3a2f08}
+.num{font-size:20px;font-weight:700}.small{font-size:12px;color:#a9bfae}
+.err{background:#5a1d1d;padding:10px;border-radius:8px;margin:10px 0}.ok{background:#1d4d2a;padding:10px;border-radius:8px;margin:10px 0}
+.kpi{display:flex;gap:12px;flex-wrap:wrap}.kpi div{background:#101b14;border-radius:8px;padding:10px 14px}
+.kpi b{font-size:22px;display:block}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<header><b>🎟 節電鯖 宝くじ運営システム</b><nav id="nav"></nav></header>
+<main id="main"></main>
+<script>
+const SUPABASE_URL = "https://hfcnvdplnqqbrzpttpqy.supabase.co";
+const SUPABASE_KEY = "sb_publishable_Zdf-FwE0uoRDLvxwLIGxRQ_Ut56VGhB";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const VALID_NUMBERS = Array.from({length: 89}, (_, i) => i + 11).filter(n => n % 10 !== 0); // 11-99 末尾0除外 = 81通り
+const LOT_RATIO = {5: 50, 10: 40, 20: 10};
+const $main = document.getElementById("main");
+const $nav = document.getElementById("nav");
+let session = null, profile = null, currentRound = null;
+
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const todayISO = () => new Date().toISOString().slice(0, 10);
+function addDays(iso, d) { const t = new Date(iso + "T00:00:00"); t.setDate(t.getDate() + d); return t.toISOString().slice(0, 10); }
+function addMonths(iso, m) { const t = new Date(iso + "T00:00:00"); const day = t.getDate(); t.setMonth(t.getMonth() + m); if (t.getDate() < day) t.setDate(0); return t.toISOString().slice(0, 10); }
+function msg(html, ok = true) { return html ? `<div class="${ok ? "ok" : "err"}">${html}</div>` : ""; }
+async function audit(action, detail) { if (profile) await sb.from("audit").insert({actor: profile.username, action, detail}); }
+
+// ---- 計算 (サーバ版 app.py と同一ロジック) ----
+const prizeFund = (total, price, rate = 100) => Math.floor(total * price * rate / 100);
+const poolPerNumber = (total, price, winCount, rate = 100) => winCount > 0 ? Math.floor(prizeFund(total, price, rate) / winCount) : 0;
+const payoutPerTicket = (total, price, winCount, cnt, rate = 100) => cnt > 0 ? Math.floor(poolPerNumber(total, price, winCount, rate) / cnt) : 0;
+function secureRandomInt(max) { const a = new Uint32Array(1); crypto.getRandomValues(a); return a[0] % max; }
+function drawNumbers(soldNumbers, winCount) { // 購入者がいない番号は再抽選・重複当選は再抽選しない (Wiki規則)
+  if (!soldNumbers.length) throw new Error("販売済みの番号がありません");
+  const sorted = [...soldNumbers].sort((a, b) => a - b);
+  return Array.from({length: winCount}, () => sorted[secureRandomInt(sorted.length)]);
+}
+function formatWinning(winList) {
+  const uniq = [...new Set(winList)].sort((a, b) => a - b);
+  return uniq.map(n => { const c = winList.filter(x => x === n).length; return c > 1 ? `${n} ×${c}` : `${n}`; }).join(" ・ ");
+}
+function redemptionFee(gross, isSponsor, today, rnd) {
+  const freeUntil = rnd.redeem_free_until || "9999-12-31";
+  const extUntil = rnd.redeem_ext_until || freeUntil;
+  const sponsorUntil = rnd.sponsor_redeem_until || extUntil;
+  if (today <= freeUntil) return 0;
+  if (isSponsor && today <= sponsorUntil) return 0;
+  if (today <= extUntil) return Math.floor(gross * 10 / 100);
+  return null;
+}
+function parseNumbers(text) {
+  const toks = (text || "").replace(/[、，　]/g, " ").split(/[,\s]+/).filter(Boolean);
+  const out = [];
+  for (const tok of toks) {
+    if (!/^\d{1,2}$/.test(tok)) throw new Error(`番号の形式が変です: ${tok}`);
+    const n = parseInt(tok, 10);
+    if (!VALID_NUMBERS.includes(n)) throw new Error(`${n} は販売できない番号です (11-99・末尾0は不可)`);
+    out.push(n);
+  }
+  return out;
+}
+
+// ---- 共通データ取得 ----
+async function fetchRounds() { const {data, error} = await sb.from("rounds").select("*").order("id", {ascending: false}); if (error) throw error; return data; }
+async function fetchTickets(roundId) { const {data, error} = await sb.from("tickets").select("*").eq("round_id", roundId).order("id"); if (error) throw error; return data; }
+function statsFromTickets(tickets) {
+  const counts = {};
+  for (const t of tickets) if (t.status === "valid") counts[t.number] = (counts[t.number] || 0) + 1;
+  return {counts, total: Object.values(counts).reduce((a, b) => a + b, 0)};
+}
+function computeWinners(tickets, rnd) {
+  const winList = rnd.winning_numbers || [];
+  if (!winList.length) return {};
+  const {counts, total} = statsFromTickets(tickets);
+  const mult = {}; winList.forEach(n => mult[n] = (mult[n] || 0) + 1);
+  const per = {}; Object.keys(mult).forEach(n => per[n] = payoutPerTicket(total, rnd.price, rnd.win_count, counts[n] || 0, rnd.payout_rate));
+  const result = {};
+  for (const t of tickets) {
+    if (t.status !== "valid") continue;
+    const b = result[t.buyer] ||= {winTickets: [], gross: 0, paidTotal: 0, isSponsor: false, ticketsTotal: 0};
+    b.ticketsTotal++; b.paidTotal += t.amount_paid;
+    if (t.source === "sponsor" || t.source === "donation") b.isSponsor = true;
+    if (mult[t.number]) { b.winTickets.push(t.number); b.gross += per[t.number] * mult[t.number]; }
+  }
+  return Object.fromEntries(Object.entries(result).filter(([, v]) => v.winTickets.length));
+}
+
+// ---- ナビ ----
+function renderNav() {
+  if (!session) {
+    $nav.innerHTML = `<a href="#public">公開ページ</a><a href="#claim">自販機で買った方</a><a href="#login">販売員ログイン</a>`;
+  } else if (!profile || !profile.active) {
+    $nav.innerHTML = `<span class="small">${esc(profile?.username || "")} (有効化待ち)</span> <button class="sub" onclick="logout()">ログアウト</button>`;
+  } else {
+    $nav.innerHTML = `<a href="#app">ダッシュボード</a><a href="#sell">販売</a><a href="#lots">自販機ロット</a><a href="#donations">寄付</a><a href="#numbers">番号順</a><a href="#winners">当選・引換</a><a href="#manage">無効化・譲渡</a><a href="#public">公開ページ</a>`
+      + (profile.role === "admin" ? `<a href="#rounds">回・設定</a><a href="#users">販売員</a><a href="#audit">監査ログ</a>` : "")
+      + `<span class="small">${esc(profile.username)} (${esc(profile.role)})</span> <button class="sub" onclick="logout()">ログアウト</button>`;
+  }
+}
+async function logout() { await sb.auth.signOut(); session = null; profile = null; renderNav(); location.hash = "#public"; render(); }
+
+// ---- 公開ページ (匿名) ----
+async function viewPublic() {
+  $main.innerHTML = "<p>読み込み中…</p>";
+  const {data: rounds} = await sb.from("public_rounds").select("*").order("id", {ascending: false});
+  if (!rounds || !rounds.length) { $main.innerHTML = `<div class="card">まだ宝くじの回が作られていません。</div>`; return; }
+  const rnd = currentRound && rounds.find(r => r.id === currentRound) || rounds[0];
+  currentRound = rnd.id;
+  const {data: stats} = await sb.from("public_number_stats").select("*").eq("round_id", rnd.id);
+  const counts = {}; let total = 0;
+  (stats || []).forEach(s => { counts[s.number] = s.tickets; total += s.tickets; });
+  const winList = rnd.winning_numbers || [];
+  const picker = rounds.length > 1 ? `<div class="card">対象の回: <select onchange="currentRound=+this.value;viewPublic()">${rounds.map(r => `<option value="${r.id}" ${r.id === rnd.id ? "selected" : ""}>${esc(r.name)} (${esc(r.status)})</option>`).join("")}</select></div>` : "";
+  let h = `<h2>${esc(rnd.name)} 販売実績（匿名公開）</h2>${picker}`;
+  h += `<div class="card kpi"><div>発行枚数<b>${total} 枚</b></div><div>販売総額<b>${total * rnd.price} D</b></div><div>1枚<b>${rnd.price} D</b></div><div>当選確率（1口）<b>${rnd.win_count}/81 = ${(rnd.win_count / 81 * 100).toFixed(2)}%</b></div><div>状態<b>${esc(rnd.status)}</b></div></div>`;
+  if (winList.length) h += `<div class="card"><h3>当選番号</h3><p style="font-size:26px">${esc(formatWinning(winList))}</p><p class="small">同じ番号が複数回当選した場合は、その回数分配分されます。</p></div>`;
+  const mult = {}; winList.forEach(n => mult[n] = (mult[n] || 0) + 1);
+  const cells = VALID_NUMBERS.map(n => {
+    const cnt = counts[n] || 0;
+    const per = cnt ? payoutPerTicket(total, rnd.price, rnd.win_count, cnt, rnd.payout_rate) : 0;
+    const cls = mult[n] ? "cell win" : (cnt ? "cell hot" : "cell");
+    const label = mult[n] && cnt ? `当選 1口 ${per * mult[n]}D` : (cnt ? `当たれば 1口 ${per}D` : "未販売");
+    return `<div class="${cls}"><div class="num">${n}</div><div>${cnt} 枚</div><div class="small">${label}</div></div>`;
+  }).join("");
+  h += `<div class="card"><h3>番号別の販売枚数と配当予定額</h3><p class="small">購入者の名前は公開されません。配当は「販売総額 × 配分率 ÷ ${rnd.win_count} ÷ その番号の枚数」（切り捨て）で計算します。</p><div class="grid">${cells}</div></div>`;
+  $main.innerHTML = h;
+}
+
+// ---- 購入者入力 (claim) ----
+function viewClaim(m = "", ok = true) {
+  $main.innerHTML = msg(m, ok) + `<div class="card"><h2>自販機で買った方の購入者入力</h2>
+  <p>自販機で買った紙に書かれた<b>販売管理ID</b>と、あなたの Minecraft ID を入力してください。宝くじの番号があなたに紐付きます。</p>
+  <p class="small">※ 販売管理IDを何度も間違えると、しばらく入力できなくなります。紙をよく見て入力してください。</p>
+  Minecraft ID: <input id="c_buyer" maxlength="32"><br>
+  販売管理ID: <input id="c_code" maxlength="8" inputmode="numeric"><br>
+  <button onclick="doClaim()">紐付ける</button></div>`;
+}
+async function doClaim() {
+  const buyer = document.getElementById("c_buyer").value.trim();
+  const code = document.getElementById("c_code").value.trim();
+  const {data, error} = await sb.rpc("claim_lot", {p_buyer: buyer, p_sale_code: code});
+  if (error) return viewClaim("通信エラーが発生しました。時間をおいて試してください。", false);
+  if (data?.ok) return viewClaim(`紐付け完了！ あなたの番号: ${data.numbers.join(", ")}（${data.numbers.length}枚）。抽選をお楽しみに！`);
+  const map = {locked: "誤入力が続いたため、しばらく入力できません。販売員に連絡してください。", bad_buyer: "Minecraft IDの形式が変です。", not_found: "販売管理IDが見つからないか、既に入力済みです。"};
+  viewClaim(map[data?.error] || "入力できませんでした。", false);
+}
+
+// ---- 認証 ----
+function viewLogin(m = "", ok = true) {
+  $main.innerHTML = msg(m, ok) + `<div class="card"><h2>販売員ログイン</h2>
+  ユーザー名: <input id="l_user"><br>パスワード: <input id="l_pass" type="password"><br>
+  <button onclick="doLogin()">ログイン</button>
+  <p class="small">アカウントがない販売員は <a href="#register">新規登録</a> して、管理者に有効化してもらってください。</p></div>`;
+}
+function viewRegister(m = "", ok = true) {
+  $main.innerHTML = msg(m, ok) + `<div class="card"><h2>販売員アカウント新規登録</h2>
+  ユーザー名 (半角英数と_): <input id="r_user"><br>パスワード (8文字以上): <input id="r_pass" type="password"><br>
+  <button onclick="doRegister()">登録する</button>
+  <p class="small">登録しただけでは使えません。運営統括（admin）に有効化してもらってからログインしてください。</p></div>`;
+}
+const emailOf = u => `${u}@setsuden.local`;
+async function doRegister() {
+  const u = document.getElementById("r_user").value.trim();
+  const p = document.getElementById("r_pass").value;
+  if (!/^[A-Za-z0-9_]{3,32}$/.test(u)) return viewRegister("ユーザー名は半角英数と _ で3〜32文字にしてください。", false);
+  if (p.length < 8) return viewRegister("パスワードは8文字以上にしてください。", false);
+  const {error} = await sb.auth.signUp({email: emailOf(u), password: p, options: {data: {username: u}}});
+  if (error) return viewRegister("登録できませんでした: " + esc(error.message), false);
+  await sb.auth.signOut();
+  viewLogin(`登録しました。管理者に「${esc(u)} を有効化して」と伝えてください。有効化後にログインできます。`);
+}
+async function doLogin() {
+  const u = document.getElementById("l_user").value.trim();
+  const p = document.getElementById("l_pass").value;
+  const {data, error} = await sb.auth.signInWithPassword({email: emailOf(u), password: p});
+  if (error) return viewLogin("ユーザー名かパスワードが違います。", false);
+  session = data.session;
+  await loadProfile();
+  renderNav(); location.hash = "#app"; render();
+}
+async function loadProfile() {
+  if (!session) { profile = null; return; }
+  const {data} = await sb.from("profiles").select("*").eq("id", session.user.id).single();
+  profile = data || null;
+}
+</script>
+<script>
+// ---- 内部共通 ----
+function roundPicker(rounds, hash) {
+  if (rounds.length <= 1) return "";
+  return `<div class="card">対象の回: <select onchange="currentRound=+this.value;location.hash='${hash}';render()">${rounds.map(r => `<option value="${r.id}" ${r.id === currentRound ? "selected" : ""}>${esc(r.name)} (${esc(r.status)})</option>`).join("")}</select></div>`;
+}
+async function pickRound() {
+  const rounds = await fetchRounds();
+  if (!rounds.length) return {rounds, rnd: null};
+  const rnd = rounds.find(r => r.id === currentRound) || rounds[0];
+  currentRound = rnd.id;
+  return {rounds, rnd};
+}
+
+// ---- ダッシュボード ----
+async function viewApp(m = "", ok = true) {
+  const {rounds, rnd} = await pickRound();
+  if (!rnd) { $main.innerHTML = msg(m, ok) + `<div class="card">まだ回がありません。${profile.role === "admin" ? `<a href="#rounds">最初の回を作る</a>` : "管理者に回の作成を頼んでください。"}</div>`; return; }
+  const tickets = await fetchTickets(rnd.id);
+  const {total} = statsFromTickets(tickets);
+  const {data: lots} = await sb.from("lots").select("status").eq("round_id", rnd.id);
+  const lotCount = {}; (lots || []).forEach(l => lotCount[l.status] = (lotCount[l.status] || 0) + 1);
+  const {data: dons} = await sb.from("donations").select("amount_db,tickets_entitled,tickets_issued").eq("round_id", rnd.id);
+  const donSum = (dons || []).reduce((a, d) => ({db: a.db + d.amount_db, ent: a.ent + d.tickets_entitled, iss: a.iss + d.tickets_issued}), {db: 0, ent: 0, iss: 0});
+  let h = msg(m, ok) + `<h2>ダッシュボード</h2>` + roundPicker(rounds, "#app");
+  h += `<div class="card kpi"><div>回<b>${esc(rnd.name)}</b></div><div>状態<b>${esc(rnd.status)}</b></div><div>有効発行枚数<b>${total} 枚</b></div><div>販売総額（原資）<b>${total * rnd.price} D</b></div><div>当選番号1つ分の原資<b>${poolPerNumber(total, rnd.price, rnd.win_count, rnd.payout_rate)} D</b></div><div>寄付<b>${donSum.db} DB（権利 ${donSum.ent}枚 / 発行済 ${donSum.iss}枚）</b></div></div>`;
+  h += `<div class="card"><h3>自販機ロット</h3><p>${Object.entries(lotCount).map(([k, v]) => `${esc(k)}: ${v}`).join(" / ") || "なし"}</p></div>`;
+  const recent = tickets.slice(-15).reverse();
+  h += `<div class="card"><h3>最近の販売</h3><table><tr><th>ID</th><th>購入者</th><th>番号</th><th>種別</th><th>販売員</th><th>代金</th><th>状態</th></tr>${recent.map(t => `<tr><td>${t.id}</td><td>${esc(t.buyer)}</td><td>${t.number}</td><td>${esc(t.source)}</td><td>${esc(t.seller)}</td><td>${t.amount_paid}D</td><td>${esc(t.status)}</td></tr>`).join("")}</table></div>`;
+  $main.innerHTML = h;
+}
+
+// ---- 販売 ----
+async function viewSell(m = "", ok = true) {
+  const {rounds, rnd} = await pickRound();
+  if (!rnd) { $main.innerHTML = `<div class="card">回がありません。</div>`; return; }
+  const {data: dons} = await sb.from("donations").select("*").eq("round_id", rnd.id);
+  const avail = (dons || []).filter(d => d.tickets_issued < d.tickets_entitled);
+  $main.innerHTML = msg(m, ok) + roundPicker(rounds, "#sell") + `<div class="card"><h2>対面販売・券の登録（${esc(rnd.name)} / 1枚 ${rnd.price}D）</h2>
+  購入者 MCID: <input id="s_buyer" maxlength="32"><br>
+  種別: <select id="s_source"><option value="face">対面販売</option><option value="sponsor">スポンサー販売</option><option value="donation">寄付特典の引換</option></select><br>
+  寄付の引換のとき: <select id="s_donation"><option value="">（なし）</option>${avail.map(d => `<option value="${d.id}">${esc(d.donor)}（残り ${d.tickets_entitled - d.tickets_issued} 枚）</option>`).join("")}</select><br>
+  番号（カンマ区切り・同じ番号を複数回書くと複数口）: <input id="s_numbers" size="50" placeholder="例: 11, 17, 24, 24"><br>
+  おまかせ枚数: <input id="s_omakase" type="number" min="0" max="200" value="0"> 枚（番号欄が空のとき、売れていない番号優先で自動選択）<br>
+  <label><input type="checkbox" id="s_benefit"> 寄付特典として渡す（代金0・引換券回収）</label><br>
+  <label><input type="checkbox" id="s_staff"> 販売員本人の購入（回の設定で割引ONのとき1割引）</label><br>
+  <button onclick="doSell()">販売を登録する</button>
+  <p class="small">買える番号は 11〜99（末尾0は不可）の81通り。スポンサー券は 5DB/枚 が目安。販売員割引は現在 ${rnd.staff_discount ? "ON" : "OFF"}。</p></div>`;
+}
+async function doSell() {
+  try {
+    const {rnd} = await pickRound();
+    if (!["preparing", "selling"].includes(rnd.status)) throw new Error(`この回は販売できません（状態: ${rnd.status}）`);
+    const buyer = document.getElementById("s_buyer").value.trim();
+    if (!/^[A-Za-z0-9_]{3,32}$/.test(buyer)) throw new Error("購入者MCIDの形式が変です");
+    const source = document.getElementById("s_source").value;
+    let numbers = parseNumbers(document.getElementById("s_numbers").value);
+    const omakase = parseInt(document.getElementById("s_omakase").value || "0", 10);
+    if (omakase > 0) {
+      if (numbers.length) throw new Error("番号指定とおまかせは同時に使えません");
+      const tickets = await fetchTickets(rnd.id);
+      const {counts} = statsFromTickets(tickets);
+      const pool = [...VALID_NUMBERS].sort((a, b) => (counts[a] || 0) - (counts[b] || 0) || secureRandomInt(1000) - 500);
+      numbers = Array.from({length: omakase}, (_, i) => omakase <= 81 ? pool[i % pool.length] : VALID_NUMBERS[secureRandomInt(81)]).sort((a, b) => a - b);
+    }
+    if (!numbers.length) throw new Error("番号が入力されていません");
+    let don = null;
+    const donId = document.getElementById("s_donation").value;
+    if (source === "donation") {
+      if (!donId) throw new Error("寄付特典の引換には寄付レコードを選んでください");
+      const {data} = await sb.from("donations").select("*").eq("id", donId).single();
+      don = data;
+      if (don.tickets_issued + numbers.length > don.tickets_entitled) throw new Error(`寄付の権利は残り ${don.tickets_entitled - don.tickets_issued} 枚です`);
+    }
+    const benefit = document.getElementById("s_benefit").checked;
+    let amountEach = rnd.price;
+    if (benefit || source === "donation") amountEach = 0;
+    else if (source === "sponsor") amountEach = 45;
+    else if (document.getElementById("s_staff").checked && rnd.staff_discount) amountEach = rnd.price - Math.floor(rnd.price / 10);
+    const rows = numbers.map(n => ({round_id: rnd.id, buyer, number: n, seller: profile.username, source, donation_id: don?.id || null, is_donation_benefit: benefit, amount_paid: amountEach}));
+    const {error} = await sb.from("tickets").insert(rows); if (error) throw error;
+    if (don) { const {error: e2} = await sb.from("donations").update({tickets_issued: don.tickets_issued + numbers.length}).eq("id", don.id); if (e2) throw e2; }
+    await audit("sell", `round=${rnd.id} buyer=${buyer} numbers=${numbers} source=${source}`);
+    viewSell(`${esc(buyer)} さんに ${numbers.length} 枚販売しました（番号: ${numbers.join(", ")} / 代金目安 ${amountEach * numbers.length}D）`);
+  } catch (e) { viewSell(esc(e.message), false); }
+}
+
+// ---- 自販機ロット ----
+async function viewLots(m = "", ok = true) {
+  const {rounds, rnd} = await pickRound();
+  if (!rnd) { $main.innerHTML = `<div class="card">回がありません。</div>`; return; }
+  const {data: lots} = await sb.from("lots").select("*").eq("round_id", rnd.id).order("id", {ascending: false}).limit(200);
+  const sold = (lots || []).filter(l => l.status !== "stocked");
+  const ratio = [5, 10, 20].map(s => { const c = sold.filter(l => l.size === s).length; return `${s}枚: 実績 ${sold.length ? Math.round(c / sold.length * 100) : 0}%（目標 ${LOT_RATIO[s]}%）`; }).join(" / ");
+  const rows = (lots || []).map(l => `<tr><td>${l.id}</td><td><b>${esc(l.sale_code)}</b></td><td>${esc(l.machine_code)}</td><td>${l.size}</td><td>${esc((l.numbers || []).join(", "))}</td><td>${esc(l.status)}</td><td>${esc(l.buyer)}</td><td>${esc(l.created_by)}</td></tr>`).join("");
+  $main.innerHTML = msg(m, ok) + roundPicker(rounds, "#lots") + `<div class="card"><h2>自販機ロット作成（${esc(rnd.name)}）</h2>
+  <p class="small">ロット = 自販機で売る複数枚セット。作成するとランダムな番号セットと<b>販売管理ID</b>が発行されます。販売管理IDを紙に書いて券と一緒にチェストへ。購入者は公開フォームで MCID+販売管理ID を入力します。この一覧（特に販売管理ID）は購入者に見せないでください。</p>
+  <p class="small">設置割合の目安: ${ratio}</p>
+  自販機コード: <input id="lot_machine" placeholder="例: L1, R3">
+  枚数: <select id="lot_size"><option>5</option><option>10</option><option>20</option></select>
+  個数: <input id="lot_count" type="number" value="1" min="1" max="50">
+  <button onclick="doLotsCreate()">ロットを作成</button></div>
+  <div class="card"><h3>未入力ロットの購入者を代行登録</h3>
+  販売管理ID: <input id="lot_code"> 購入者 MCID: <input id="lot_buyer">
+  <button class="sub" onclick="doLotsAssign()">代行登録する</button></div>
+  <div class="card"><h3>ロット一覧（最新200件）</h3><table><tr><th>ID</th><th>販売管理ID</th><th>自販機</th><th>枚数</th><th>番号</th><th>状態</th><th>購入者</th><th>作成者</th></tr>${rows}</table></div>`;
+}
+async function doLotsCreate() {
+  try {
+    const {rnd} = await pickRound();
+    const machine = document.getElementById("lot_machine").value.trim();
+    const size = parseInt(document.getElementById("lot_size").value, 10);
+    const count = parseInt(document.getElementById("lot_count").value || "1", 10);
+    if (!machine) throw new Error("自販機コードを入れてください");
+    const {data: existing} = await sb.from("lots").select("sale_code");
+    const used = new Set((existing || []).map(l => l.sale_code));
+    const rows = [], made = [];
+    for (let i = 0; i < count; i++) {
+      let code; do { code = String(10000 + secureRandomInt(90000)); } while (used.has(code)); used.add(code);
+      const pool = [...VALID_NUMBERS];
+      const numbers = [];
+      for (let k = 0; k < size; k++) numbers.push(pool.splice(secureRandomInt(pool.length), 1)[0]);
+      numbers.sort((a, b) => a - b);
+      rows.push({round_id: rnd.id, machine_code: machine, sale_code: code, size, numbers, created_by: profile.username});
+      made.push(`${machine}: ID ${code} / 番号 ${numbers.join(",")}`);
+    }
+    const {error} = await sb.from("lots").insert(rows); if (error) throw error;
+    await audit("lot_create", `round=${rnd.id} ${made.join(" | ")}`);
+    viewLots("ロットを作成しました → " + esc(made.join(" | ")));
+  } catch (e) { viewLots(esc(e.message), false); }
+}
+async function doLotsAssign() {
+  try {
+    const code = document.getElementById("lot_code").value.trim();
+    const buyer = document.getElementById("lot_buyer").value.trim();
+    if (!/^[A-Za-z0-9_]{3,32}$/.test(buyer)) throw new Error("購入者MCIDの形式が変です");
+    const {data: lot} = await sb.from("lots").select("*").eq("sale_code", code).eq("status", "stocked").single();
+    if (!lot) throw new Error("その販売管理IDのロットは無いか、登録済みです");
+    const {rnd} = await pickRound();
+    const rows = lot.numbers.map(n => ({round_id: lot.round_id, buyer, number: n, seller: profile.username, source: "vending", lot_id: lot.id, amount_paid: rnd.price}));
+    const {error} = await sb.from("tickets").insert(rows); if (error) throw error;
+    const {error: e2} = await sb.from("lots").update({status: "assigned", buyer, claimed_at: new Date().toISOString()}).eq("id", lot.id); if (e2) throw e2;
+    await audit("lot_assign", `lot=${lot.id} buyer=${buyer}`);
+    viewLots(`${esc(buyer)} さんに代行登録しました（番号: ${lot.numbers.join(", ")}）`);
+  } catch (e) { viewLots(esc(e.message), false); }
+}
+
+// ---- 寄付 ----
+async function viewDonations(m = "", ok = true) {
+  const {rounds, rnd} = await pickRound();
+  if (!rnd) { $main.innerHTML = `<div class="card">回がありません。</div>`; return; }
+  const {data: dons} = await sb.from("donations").select("*").eq("round_id", rnd.id).order("id");
+  const rows = (dons || []).map(d => `<tr><td>${esc(d.donor)}</td><td>${d.amount_db} DB</td><td>${d.tickets_entitled}</td><td>${d.tickets_issued}</td><td>${d.tickets_issued >= d.tickets_entitled ? "済" : "未"}</td><td>${esc(d.note)}</td></tr>`).join("");
+  $main.innerHTML = msg(m, ok) + roundPicker(rounds, "#donations") + `<div class="card"><h2>寄付・スポンサー管理（${esc(rnd.name)}）</h2>
+  <p class="small">寄付 5DB につき宝くじ1枚を発行します（先行販売の対象）。券の発行は「販売」画面で種別=寄付特典の引換 を選んでください。10DB以上なら合計2枚（寄付額÷5で自動計算）。</p>
+  寄付者 MCID: <input id="d_donor"> 寄付額(DB): <input id="d_db" type="number" min="1"> メモ: <input id="d_note">
+  <button onclick="doDonation()">寄付を記録</button></div>
+  <div class="card"><table><tr><th>寄付者</th><th>受付額</th><th>発行権利</th><th>発行済</th><th>引換</th><th>メモ</th></tr>${rows}</table></div>`;
+}
+async function doDonation() {
+  try {
+    const {rnd} = await pickRound();
+    const donor = document.getElementById("d_donor").value.trim();
+    const db = parseInt(document.getElementById("d_db").value || "0", 10);
+    if (!donor || db <= 0) throw new Error("寄付者と寄付額を入れてください");
+    const entitled = Math.floor(db / 5);
+    const {error} = await sb.from("donations").insert({round_id: rnd.id, donor, amount_db: db, tickets_entitled: entitled, note: document.getElementById("d_note").value.trim()});
+    if (error) throw error;
+    await audit("donation", `donor=${donor} db=${db} entitled=${entitled}`);
+    viewDonations(`${esc(donor)} さんの寄付 ${db}DB を記録しました（券の権利 ${entitled} 枚）`);
+  } catch (e) { viewDonations(esc(e.message), false); }
+}
+
+// ---- 番号順 ----
+async function viewNumbers() {
+  const {rounds, rnd} = await pickRound();
+  if (!rnd) { $main.innerHTML = `<div class="card">回がありません。</div>`; return; }
+  const tickets = await fetchTickets(rnd.id);
+  const {counts, total} = statsFromTickets(tickets);
+  const winList = rnd.winning_numbers || []; const winSet = new Set(winList);
+  let h = roundPicker(rounds, "#numbers") + `<div class="card"><h2>番号順・購入者確認（${esc(rnd.name)} / 有効 ${total} 枚）</h2><p class="small">この画面は内部用です。公開ページには名前は出ません。</p><div class="grid">`;
+  for (const n of VALID_NUMBERS) {
+    const buyers = tickets.filter(t => t.number === n && t.status === "valid");
+    const per = buyers.length ? payoutPerTicket(total, rnd.price, rnd.win_count, buyers.length, rnd.payout_rate) : 0;
+    const cls = winSet.has(n) ? "cell win" : (buyers.length ? "cell hot" : "cell");
+    h += `<div class="${cls}"><div class="num">${n}</div><div>${buyers.length}枚 / 1口 ${per}D</div><div class="small">${buyers.slice(0, 14).map(t => esc(t.buyer)).join("<br>")}${buyers.length > 14 ? "<br>…" : ""}</div></div>`;
+  }
+  h += `</div></div>`;
+  const agg = {};
+  tickets.filter(t => t.status === "valid").forEach(t => { const a = agg[t.buyer] ||= {cnt: 0, paid: 0}; a.cnt++; a.paid += t.amount_paid; });
+  const rows = Object.entries(agg).sort((a, b) => b[1].cnt - a[1].cnt).map(([b, a]) => `<tr><td>${esc(b)}</td><td>${a.cnt}</td><td>${total ? (a.cnt / total * 100).toFixed(2) : 0}%</td><td>${a.paid}D</td></tr>`).join("");
+  h += `<div class="card"><h3>購入者ランキング（支配率つき）</h3><table><tr><th>購入者</th><th>枚数</th><th>支配率</th><th>支払額</th></tr>${rows}</table></div>`;
+  $main.innerHTML = h;
+}
+
+// ---- 当選・引換 ----
+async function viewWinners(m = "", ok = true) {
+  const {rounds, rnd} = await pickRound();
+  if (!rnd) { $main.innerHTML = `<div class="card">回がありません。</div>`; return; }
+  let h = msg(m, ok) + roundPicker(rounds, "#winners");
+  const winList = rnd.winning_numbers || [];
+  if (profile.role === "admin" && !winList.length && ["closed", "selling", "preparing"].includes(rnd.status)) {
+    h += `<div class="card"><h2>抽選（${esc(rnd.name)}）</h2><p class="small">販売を締め切ってから実行してください。販売済みの番号の中から ${rnd.win_count} 個を引きます（購入者がいない番号は再抽選されるのと同じ扱い）。重複当選はそのまま当選回数分配分します。</p><button class="danger" onclick="doDraw()">🎲 抽選を実行する</button></div>`;
+  }
+  if (!winList.length) { h += `<div class="card">まだ抽選していません。</div>`; $main.innerHTML = h; return; }
+  h += `<div class="card"><h2>当選番号: ${esc(formatWinning(winList))}</h2><p class="small">抽選日時 ${esc(rnd.drawn_at || "")} / 実行 ${esc(rnd.drawn_by || "")}</p>`;
+  if (profile.role === "admin") h += `<button class="sub" onclick="doDrawReset()">抽選を取り消す</button>`;
+  h += `</div>`;
+  const tickets = await fetchTickets(rnd.id);
+  const winners = computeWinners(tickets, rnd);
+  const {data: reds} = await sb.from("redemptions").select("*").eq("round_id", rnd.id);
+  const redeemedBuyers = new Set((reds || []).map(r => r.buyer));
+  const fund = prizeFund(statsFromTickets(tickets).total, rnd.price, rnd.payout_rate);
+  const grossSum = Object.values(winners).reduce((a, w) => a + w.gross, 0);
+  const rows = Object.entries(winners).sort((a, b) => b[1].gross - a[1].gross).map(([buyer, w]) => {
+    const fee = redemptionFee(w.gross, w.isSponsor, todayISO(), rnd);
+    const feeTxt = fee === null ? "期限切れ（要相談）" : `手数料 ${fee}D / 支払 ${w.gross - fee}D`;
+    const state = redeemedBuyers.has(buyer) ? "引換済" : `<button onclick="doRedeem('${esc(buyer)}')">引換済にする</button>`;
+    return `<tr><td>${esc(buyer)}</td><td>${w.winTickets.join(", ")}</td><td>${w.gross}D</td><td>${w.paidTotal}D</td><td>${w.gross - w.paidTotal}D</td><td>${w.isSponsor ? "スポンサー/寄付" : "一般"}</td><td>${feeTxt}</td><td>${state}</td></tr>`;
+  }).join("");
+  h += `<div class="card"><h3>当選者リスト</h3><p class="small">引換期限: 無償 ${esc(rnd.redeem_free_until || "未設定")} / 延長(10%手数料) ${esc(rnd.redeem_ext_until || "未設定")} / スポンサー ${esc(rnd.sponsor_redeem_until || "未設定")}。引換には宝くじ券の提示が必要です。</p><table><tr><th>当選者</th><th>当選口</th><th>配当</th><th>購入額</th><th>損益</th><th>区分</th><th>本日引換時</th><th>引換</th></tr>${rows}</table></div>`;
+  h += `<div class="card"><h3>配分の内訳</h3><p>配当原資（販売総額 × 配分率${rnd.payout_rate}%）: ${fund}D / 当選者への配当合計: ${grossSum}D / <b>端数 ${fund - grossSum}D は Gate07 へ寄付</b></p></div>`;
+  if (reds && reds.length) h += `<div class="card"><h3>引換済み記録</h3><table><tr><th>当選者</th><th>配当</th><th>手数料</th><th>支払額</th><th>担当</th><th>日時</th></tr>${reds.map(r => `<tr><td>${esc(r.buyer)}</td><td>${r.gross}</td><td>${r.fee}</td><td>${r.net}</td><td>${esc(r.redeemed_by)}</td><td>${esc(r.redeemed_at)}</td></tr>`).join("")}</table></div>`;
+  $main.innerHTML = h;
+}
+async function doDraw() {
+  if (!confirm("抽選を実行します。よろしいですか？")) return;
+  try {
+    const {rnd} = await pickRound();
+    const tickets = await fetchTickets(rnd.id);
+    const {counts} = statsFromTickets(tickets);
+    const sold = Object.keys(counts).map(Number).filter(n => counts[n] > 0);
+    const win = drawNumbers(sold, rnd.win_count);
+    const t = todayISO();
+    const patch = {winning_numbers: win, drawn_at: new Date().toISOString(), drawn_by: profile.username, status: "drawn",
+      redeem_free_until: rnd.redeem_free_until || addDays(t, 6),
+      redeem_ext_until: rnd.redeem_ext_until || addDays(t, 20),
+      sponsor_redeem_until: rnd.sponsor_redeem_until || addMonths(t, 1)};
+    const {error} = await sb.from("rounds").update(patch).eq("id", rnd.id); if (error) throw error;
+    await audit("draw", `round=${rnd.id} numbers=${win}`);
+    viewWinners(`抽選しました: ${esc(formatWinning(win))}`);
+  } catch (e) { viewWinners(esc(e.message), false); }
+}
+async function doDrawReset() {
+  if (!confirm("抽選を取り消しますか？引換済みの記録がある場合は取り消せません")) return;
+  try {
+    const {rnd} = await pickRound();
+    const {data: reds} = await sb.from("redemptions").select("id").eq("round_id", rnd.id);
+    if (reds && reds.length) throw new Error("引換済みの記録があるので取り消せません");
+    const {error} = await sb.from("rounds").update({winning_numbers: [], drawn_at: null, drawn_by: "", status: "closed"}).eq("id", rnd.id); if (error) throw error;
+    await audit("draw_reset", `round=${rnd.id}`);
+    viewWinners("抽選を取り消しました");
+  } catch (e) { viewWinners(esc(e.message), false); }
+}
+async function doRedeem(buyer) {
+  try {
+    const {rnd} = await pickRound();
+    const tickets = await fetchTickets(rnd.id);
+    const winners = computeWinners(tickets, rnd);
+    const w = winners[buyer]; if (!w) throw new Error("当選者ではありません");
+    let fee = redemptionFee(w.gross, w.isSponsor, todayISO(), rnd);
+    let note = "";
+    if (fee === null) { fee = 0; note = "期限切れ・特例支払い"; }
+    const {error} = await sb.from("redemptions").insert({round_id: rnd.id, buyer, gross: w.gross, fee, net: w.gross - fee, redeemed_by: profile.username, note});
+    if (error) throw error;
+    await audit("redeem", `buyer=${buyer} gross=${w.gross} fee=${fee} ${note}`);
+    viewWinners(`${esc(buyer)} さんの引換を記録しました（支払 ${w.gross - fee}D / 手数料 ${fee}D）`);
+  } catch (e) { viewWinners(esc(e.message), false); }
+}
+
+// ---- 無効化・譲渡 ----
+async function viewManage(m = "", ok = true) {
+  const {rounds, rnd} = await pickRound();
+  if (!rnd) { $main.innerHTML = `<div class="card">回がありません。</div>`; return; }
+  const tickets = await fetchTickets(rnd.id);
+  const rows = tickets.slice(0, 500).map(t => `<tr><td>${t.id}</td><td>${esc(t.buyer)}</td><td>${t.number}</td><td>${esc(t.source)}</td><td>${t.amount_paid}D</td><td>${esc(t.status)}</td><td>${esc(t.invalid_reason)}</td><td>${t.status === "valid" ? `<input id="reason_${t.id}" placeholder="理由 (BAN等)" size="10"><button class="danger" onclick="doInvalid(${t.id})">無効化</button>` : `<button class="sub" onclick="doRestore(${t.id})">戻す</button>`}</td></tr>`).join("");
+  $main.innerHTML = msg(m, ok) + roundPicker(rounds, "#manage") + `<div class="card"><h2>券の譲渡（名義変更）</h2>
+  <p class="small">譲渡・再販は抽選開始30分前までに譲渡先IDを運営へ通知するのが規則です。通知を受けた分をここで付け替えてください（監査ログに残ります）。</p>
+  譲渡元 MCID: <input id="t_from"> 譲渡先 MCID: <input id="t_to"> 番号（任意・空欄なら全券）: <input id="t_number" size="6">
+  <button class="sub" onclick="doTransfer()">譲渡を記録して付け替える</button></div>
+  <div class="card"><h2>券の無効化（${esc(rnd.name)}）</h2><p class="small">BAN者・販売拒否者の券は抽選前に無効化してください。無効化した券は配当原資・当選判定から外れます。</p>
+  <table><tr><th>ID</th><th>購入者</th><th>番号</th><th>種別</th><th>代金</th><th>状態</th><th>理由</th><th>操作</th></tr>${rows}</table></div>`;
+}
+async function doInvalid(tid) {
+  const reason = document.getElementById("reason_" + tid)?.value || "";
+  const {error} = await sb.from("tickets").update({status: "invalid", invalid_reason: reason}).eq("id", tid);
+  if (error) return viewManage(esc(error.message), false);
+  await audit("ticket_invalidate", `ticket=${tid} reason=${reason}`);
+  viewManage("無効化しました");
+}
+async function doRestore(tid) {
+  const {error} = await sb.from("tickets").update({status: "valid", invalid_reason: ""}).eq("id", tid);
+  if (error) return viewManage(esc(error.message), false);
+  await audit("ticket_restore", `ticket=${tid}`);
+  viewManage("有効に戻しました");
+}
+async function doTransfer() {
+  try {
+    const {rnd} = await pickRound();
+    const from = document.getElementById("t_from").value.trim();
+    const to = document.getElementById("t_to").value.trim();
+    const num = document.getElementById("t_number").value.trim();
+    if (!/^[A-Za-z0-9_]{3,32}$/.test(to)) throw new Error("譲渡先MCIDの形式が変です");
+    let q = sb.from("tickets").update({buyer: to}).eq("round_id", rnd.id).eq("buyer", from).eq("status", "valid");
+    if (num) q = q.eq("number", parseInt(num, 10));
+    const {data, error} = await q.select(); if (error) throw error;
+    if (!data || !data.length) throw new Error("対象の券がありません");
+    await audit("transfer", `round=${rnd.id} from=${from} to=${to} number=${num || "ALL"} count=${data.length}`);
+    viewManage(`${esc(from)} → ${esc(to)} に ${data.length} 枚を譲渡しました`);
+  } catch (e) { viewManage(esc(e.message), false); }
+}
+
+// ---- 管理: 回 ----
+async function viewRounds(m = "", ok = true) {
+  const rounds = await fetchRounds();
+  const rows = rounds.map(r => `<tr><td>${r.id}</td><td>${esc(r.name)}</td><td>${esc(r.status)}</td><td>${r.price}D</td><td>${r.win_count}</td><td>${r.payout_rate}%</td>
+  <td><select id="st_${r.id}"><option ${r.status === "preparing" ? "selected" : ""}>preparing</option><option ${r.status === "selling" ? "selected" : ""}>selling</option><option ${r.status === "closed" ? "selected" : ""}>closed</option><option ${r.status === "drawn" ? "selected" : ""}>drawn</option><option ${r.status === "finished" ? "selected" : ""}>finished</option></select><button class="sub" onclick="doRoundStatus(${r.id})">変更</button></td>
+  <td>無償 <input id="free_${r.id}" type="date" value="${esc(r.redeem_free_until || "")}"> 延長 <input id="ext_${r.id}" type="date" value="${esc(r.redeem_ext_until || "")}"> スポンサー <input id="spon_${r.id}" type="date" value="${esc(r.sponsor_redeem_until || "")}"><button class="sub" onclick="doRoundDates(${r.id})">期限を保存</button></td></tr>`).join("");
+  $main.innerHTML = msg(m, ok) + `<div class="card"><h2>新しい回を作る</h2>
+  回の名前: <input id="nr_name" placeholder="例: 第12回宝くじ"> 価格(D): <input id="nr_price" type="number" value="10" min="1">
+  当選番号数: <input id="nr_win" type="number" value="5" min="1" max="20">
+  配分率%: <input id="nr_rate" type="number" value="100" min="1" max="100"> <span class="small">通常100。Wikiの計算例 (総額×0.9) を採る回は90</span>
+  <label><input type="checkbox" id="nr_sd"> 販売員1割引を有効にする</label>
+  <button onclick="doRoundCreate()">作成</button></div>
+  <div class="card"><h3>回の一覧</h3><table><tr><th>ID</th><th>名前</th><th>状態</th><th>価格</th><th>当選数</th><th>配分率</th><th>状態変更</th><th>引換期限</th></tr>${rows}</table>
+  <p class="small">状態: preparing=準備中 / selling=販売中 / closed=販売締切 / drawn=抽選済 / finished=終了</p>
+  <button class="sub" onclick="doExportCsv()">販売データCSVをダウンロード（内部用・名前入り）</button></div>`;
+}
+async function doRoundCreate() {
+  try {
+    const body = {name: document.getElementById("nr_name").value.trim(), price: parseInt(document.getElementById("nr_price").value || "10", 10),
+      win_count: parseInt(document.getElementById("nr_win").value || "5", 10), payout_rate: parseInt(document.getElementById("nr_rate").value || "100", 10),
+      staff_discount: document.getElementById("nr_sd").checked, status: "preparing"};
+    if (!body.name) throw new Error("回の名前を入れてください");
+    const {error} = await sb.from("rounds").insert(body); if (error) throw error;
+    await audit("round_create", `name=${body.name}`);
+    viewRounds(`回「${esc(body.name)}」を作成しました。状態を selling にすると販売できます`);
+  } catch (e) { viewRounds(esc(e.message), false); }
+}
+async function doRoundStatus(id) {
+  const st = document.getElementById("st_" + id).value;
+  const {error} = await sb.from("rounds").update({status: st}).eq("id", id);
+  if (error) return viewRounds(esc(error.message), false);
+  await audit("round_status", `round=${id} status=${st}`);
+  viewRounds("状態を変更しました");
+}
+async function doRoundDates(id) {
+  const patch = {redeem_free_until: document.getElementById("free_" + id).value || null, redeem_ext_until: document.getElementById("ext_" + id).value || null, sponsor_redeem_until: document.getElementById("spon_" + id).value || null};
+  const {error} = await sb.from("rounds").update(patch).eq("id", id);
+  if (error) return viewRounds(esc(error.message), false);
+  viewRounds("引換期限を保存しました");
+}
+async function doExportCsv() {
+  const {rnd} = await pickRound(); if (!rnd) return;
+  const tickets = await fetchTickets(rnd.id);
+  const lines = ["ticket_id,round,buyer,number,seller,source,amount_paid,status,created_at"];
+  tickets.forEach(t => lines.push([t.id, rnd.name, t.buyer, t.number, t.seller, t.source, t.amount_paid, t.status, t.created_at].join(",")));
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([lines.join("\n")], {type: "text/csv"}));
+  a.download = "lottery_tickets.csv"; a.click();
+}
+
+// ---- 管理: 販売員 ----
+async function viewUsers(m = "", ok = true) {
+  const {data: users} = await sb.from("profiles").select("*").order("created_at");
+  const rows = (users || []).map(u => `<tr><td>${esc(u.username)}</td><td><select id="role_${u.id}"><option value="seller" ${u.role === "seller" ? "selected" : ""}>seller</option><option value="admin" ${u.role === "admin" ? "selected" : ""}>admin</option></select></td><td>${u.active ? "有効" : "未有効化"}</td><td>${esc(u.created_at)}</td><td><button class="sub" onclick="doUserSave('${u.id}')">保存（権限・有効化）</button></td></tr>`).join("");
+  $main.innerHTML = msg(m, ok) + `<div class="card"><h2>販売員アカウント</h2>
+  <p class="small">販売員には「新規登録」画面で自分のユーザー名とパスワードを登録してもらい、ここで有効化してください。有効化するまで販売データには一切触れません。パスワードは Supabase Auth がハッシュ化して管理します。</p></div>
+  <div class="card"><table><tr><th>ユーザー名</th><th>権限</th><th>状態</th><th>登録日</th><th></th></tr>${rows}</table></div>`;
+}
+async function doUserSave(id) {
+  const role = document.getElementById("role_" + id).value;
+  const {data: before} = await sb.from("profiles").select("*").eq("id", id).single();
+  const {error} = await sb.from("profiles").update({role, active: true}).eq("id", id);
+  if (error) return viewUsers(esc(error.message), false);
+  await audit("user_activate", `user=${before?.username} role=${role}`);
+  viewUsers(`${esc(before?.username || "")} を有効化しました（${role}）`);
+}
+
+// ---- 管理: 監査 ----
+async function viewAudit() {
+  const {data} = await sb.from("audit").select("*").order("id", {ascending: false}).limit(200);
+  $main.innerHTML = `<div class="card"><h2>監査ログ（最新200件）</h2><table><tr><th>ID</th><th>日時</th><th>実行者</th><th>操作</th><th>詳細</th></tr>${(data || []).map(r => `<tr><td>${r.id}</td><td>${esc(r.at)}</td><td>${esc(r.actor)}</td><td>${esc(r.action)}</td><td>${esc(r.detail)}</td></tr>`).join("")}</table></div>`;
+}
+
+// ---- ルータ ----
+async function render() {
+  const hash = (location.hash || "#public").slice(1);
+  renderNav();
+  if (!session && !["public", "claim", "login", "register"].includes(hash)) { location.hash = "#public"; return; }
+  if (session && profile && !profile.active && !["public", "claim"].includes(hash)) {
+    $main.innerHTML = `<div class="card"><h2>有効化待ちです</h2><p>アカウント「${esc(profile.username)}」はまだ有効化されていません。運営統括（admin）に有効化してもらってから、もう一度開いてください。</p></div>`;
+    return;
+  }
+  switch (hash) {
+    case "public": return viewPublic();
+    case "claim": return viewClaim();
+    case "login": return session ? viewApp() : viewLogin();
+    case "register": return viewRegister();
+    case "app": return viewApp();
+    case "sell": return viewSell();
+    case "lots": return viewLots();
+    case "donations": return viewDonations();
+    case "numbers": return viewNumbers();
+    case "winners": return viewWinners();
+    case "manage": return viewManage();
+    case "rounds": return profile?.role === "admin" ? viewRounds() : viewApp();
+    case "users": return profile?.role === "admin" ? viewUsers() : viewApp();
+    case "audit": return profile?.role === "admin" ? viewAudit() : viewApp();
+    default: return viewPublic();
+  }
+}
+window.addEventListener("hashchange", render);
+(async () => {
+  const {data} = await sb.auth.getSession();
+  session = data.session;
+  await loadProfile();
+  render();
+})();
+</script>
+</body>
+</html>
