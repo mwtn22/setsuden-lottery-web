@@ -1138,14 +1138,15 @@ async function insertMMExchange(mc, kind, player, diaDelta, mmDelta, note) { // 
   }
 }
 async function viewMM(m = "", ok = true) {
-  let machines = [], hist = [], mmTicketTotal = 0, s = mmSummary([], []), chainRes = null, preCount = 0, members = [];
+  let machines = [], hist = [], mmTicketTotal = 0, s = mmSummary([], []), chainRes = null, preCount = 0, members = [], myCodes = [];
   try {
     machines = await fetchMachines();
-    const [chainData, histRes, tkRes, memRes] = await Promise.all([
+    const [chainData, histRes, tkRes, memRes, codeRes] = await Promise.all([
       fetchMMChain(),
       sb.from("mm_exchanges").select("*").order("created_at", {ascending: false}).limit(30),
       sb.from("tickets").select("amount_paid").eq("pay_currency", "MM").eq("status", "valid"),
-      sb.from("profiles").select("username").eq("active", true).order("username")
+      sb.from("profiles").select("username").eq("active", true).order("username"),
+      sb.rpc("mm_my_codes")
     ]);
     s = mmSummary([...chainData.prechain, ...chainData.chained], machines);
     preCount = chainData.prechain.length;
@@ -1153,6 +1154,7 @@ async function viewMM(m = "", ok = true) {
     hist = histRes.data || [];
     mmTicketTotal = (tkRes.data || []).reduce((a, t) => a + (t.amount_paid || 0), 0);
     members = (memRes.data || []).map(p => p.username).filter(u => u !== profile.username);
+    myCodes = codeRes.data?.ok ? (codeRes.data.codes || []) : [];
     const chained = chainData.chained;
     window._mmState = {
       circulating: s.circulating, diaTotal: s.backing,
@@ -1168,6 +1170,7 @@ async function viewMM(m = "", ok = true) {
   const mName = id => esc((machines.find(x => x.id === id) || {}).name || `#${id}`);
   const confOpts = sel => `<option value="">（選んでください）</option>` + members.map(u => `<option value="${esc(u)}" ${u === sel ? "selected" : ""}>${esc(u)}</option>`).join("");
   const activeMachines = machines.filter(mc => mc.active);
+  const inviteStatus = c => c.status === "used" ? "使用ずみ" : (c.status === "expired" || new Date(c.expires_at) <= new Date()) ? "期限切れ" : "未使用";
   const pa = window._mmAudit || null;
   let h = msg(m, ok) + `<h2>めうまねー (MM)</h2>
   <div class="card"><h3>全体のようす（レート 1D = 1MM）</h3><div class="kpi">
@@ -1200,6 +1203,17 @@ async function viewMM(m = "", ok = true) {
   <label class="f">メモ（任意）</label><input id="mm_op_note" maxlength="200" placeholder="例: 対面で受取">
   <p><button type="button" onclick="doMMOperatorTransfer('deposit')">預かり（現物を受け取る）</button>
   <button type="button" class="sub" onclick="doMMOperatorTransfer('withdraw')">払い戻し（現物を渡す）</button></p></div>`;
+  h += `<div class="card"><h3>本人確認コード</h3>
+  <label class="f">対象の Minecraft ID</label><input id="mm_invite_mcid" maxlength="16" placeholder="例: Steve_123" value="${esc(window._mmInviteMcid || "")}" oninput="window._mmInviteMcid=this.value">
+  <p><button type="button" onclick="doMMIssueCode()">コードを発行</button></p>
+  <p class="hint">ゲーム内で本人に伝えてください。有効期限は24時間です。</p>
+  ${window._mmInviteResult ? `<div style="border:1px solid var(--line2);border-radius:12px;padding:12px;margin:10px 0">
+    <div class="small">対象: ${esc(window._mmInviteResult.mcid)}</div>
+    <p style="font-size:28px;letter-spacing:4px;margin:8px 0"><b>${esc(window._mmInviteResult.code)}</b></p>
+    <p style="margin:0"><button type="button" class="sub" onclick="copyBookText('${esc(window._mmInviteResult.code)}', this)">コピー</button></p></div>` : ""}
+  <h4 style="margin:16px 0 8px">自分が発行したコード</h4>
+  ${myCodes.length ? `<div class="scroll"><table><tr><th>MCID</th><th>コード</th><th>状態</th><th>発行日時</th><th>期限</th></tr>${myCodes.map(c => `<tr><td>${esc(c.mcid)}</td><td>${esc(c.code)}</td><td>${inviteStatus(c)}</td><td>${fmtTime(c.created_at)}</td><td>${fmtTime(c.expires_at)}</td></tr>`).join("")}</table></div>` : `<p class="hint">まだありません。</p>`}
+  </div>`;
   h += `<div class="card"><h3>両替する（レート 1D = 1MM）</h3>
   <label class="f">自販機</label><select id="mm_machine">${activeMachines.map(mc => `<option value="${mc.id}">${esc(mc.name)}（${esc(mc.location)}）… ダイヤ ${mc.dia_stock} / MM ${mc.mm_stock}</option>`).join("")}</select>
   <label class="f">方向</label>
@@ -1342,6 +1356,18 @@ async function doMMAuditExecute() { // 棚卸し: 差分をチェーンに記録
     viewMM(`${esc(mc.name)} の棚卸しを記録しました（在庫を実数に合わせました）`);
   } catch (e) { window._mmAudit = null; viewMM(esc(e.message), false); }
 }
+async function doMMIssueCode() { // 対面確認用ワンタイムコードを発行する (mm_issue_code RPC)
+  try {
+    const mcid = (window._mmInviteMcid || document.getElementById("mm_invite_mcid")?.value || "").trim();
+    if (!/^[A-Za-z0-9_]{1,16}$/.test(mcid)) throw new Error("対象の Minecraft ID を入れてください（半角の英数字と _ 、16文字まで）");
+    const {data, error} = await sb.rpc("mm_issue_code", {p_mcid: mcid});
+    if (error) throw new Error(error.message);
+    if (!data?.ok) throw new Error(MMT_ERR_JP[data?.error] || `エラー: ${data?.error || "不明"}`);
+    window._mmInviteResult = {mcid, code: data.code, expiresInHours: data.expires_in_hours || 24};
+    await audit("mm_invite_issue", `mcid=${mcid}`);
+    viewMM(`本人確認コードを発行しました。ゲーム内で ${esc(mcid)} さん本人に伝えてください`);
+  } catch (e) { viewMM(esc(e.message), false); }
+}
 async function doMMOperatorTransfer(kind) { // 運営による預かり / 払い戻し (mm_operator_transfer RPC)
   try {
     const player = (document.getElementById("mm_op_player")?.value || "").trim();
@@ -1399,19 +1425,17 @@ const MMT_ERR_JP = {
   own_account: "自分には送れません",
   recipient_not_registered: "相手が未登録です",
   bad_input: "入力が違います",
-  not_member: "権限がありません"
+  not_member: "権限がありません",
+  bad_code: "本人確認コードが違います"
 };
 const MMT_KIND_JP = {send: "送金", trade: "取引", deposit: "預かり", withdraw: "払い戻し"};
 let tradePlayer = null;      // ログイン中だけ {mcid, pin} を保持する (PIN はメモリのみ)
 let tradeFocusId = null;     // #trade-<uuid> で開いたときの対象出品
 let tradeSideFilter = "all"; // 掲示板の絞り込み: all | sell | buy
 let tradeOfferSide = "sell"; // 出品フォームの向き: sell | buy
-// 本人確認 (認証サーバー方式): プレイヤーが専用の認証サーバーに参加し、チャットでコードを発言すると確認できる。
-const VERIFY_SERVER = "";    // 認証サーバーのアドレス (例: verify.example.com)。未設定なら空のまま
-let tradeVerify = null;      // ログイン後に1回だけ判定する {verified, uuid}。null は未判定
+// 本人確認は、販売員が対面で発行したワンタイムコードを使う。
+let tradeVerify = null;      // ログイン後に1回だけ判定する {verified, uuid, verifiedBy}。null は未判定
 let tradeVerifiedSet = new Set(); // mm_public_players で本人確認ずみの MCID 集合 (掲示板の表示用)
-let verifySession = null;    // 発行中の確認コード {code, expiresAt}
-let verifyTimer = null;      // 状態確認ポーリングのタイマー
 function mmtChainString(r) {
   return ["MMTCHAINv1", r.chain_seq, r.prev_hash ?? "", r.from_player ?? "", r.to_player ?? "", r.amount, r.kind ?? "", r.offer_id ?? "", r.note ?? ""].join("|");
 }
@@ -1483,8 +1507,8 @@ async function viewTrade(m = "", ok = true) {
     if (tradePlayer && tradeVerify === null) { // ログイン後に1回だけ本人確認の状態を判定する
       try {
         const st = await mmRpc("mm_verify_status", {p_mcid: tradePlayer.mcid, p_pin: tradePlayer.pin});
-        tradeVerify = {verified: !!(st && st.ok && st.verified), uuid: (st && st.uuid) || ""};
-      } catch (e) { tradeVerify = {verified: false, uuid: ""}; }
+        tradeVerify = {verified: !!(st && st.ok && st.verified), uuid: (st && st.uuid) || "", verifiedBy: (st && st.verified_by) || ""};
+      } catch (e) { tradeVerify = {verified: false, uuid: "", verifiedBy: ""}; }
     }
   } catch (e) {
     $main.innerHTML = msg(m, ok) + `<div class="card"><h2>MM取引</h2><p class="err">読み込めませんでした: ${esc(e.message)}</p><p class="hint">取引テーブル (mm_offers / mm_transfers) がまだ用意されていない可能性があります。</p></div>`;
@@ -1518,25 +1542,23 @@ async function viewTrade(m = "", ok = true) {
   if (!me) {
     h += `<label class="f">Minecraft ID</label><input id="tp_mcid" maxlength="16" placeholder="例: Steve_123" value="${esc(localStorage.getItem("mm_trade_mcid") || "")}">
     <label class="f">暗証番号 (数字4〜8桁)</label><input id="tp_pin" type="password" inputmode="numeric" autocomplete="off" maxlength="8">
+    <label class="f">本人確認コード (登録時)</label><input id="tp_code" autocomplete="off" maxlength="6" style="text-transform:uppercase">
+    <p class="hint">コードは対面で販売員から受け取ってください。</p>
     <p><button type="button" onclick="doTradeLogin()">ログイン</button>
     <button type="button" class="sub" onclick="doTradeRegister()">はじめて登録</button></p>
     <p class="hint">暗証番号は使い回さないでください (他のサービスと同じものにしない)。このページの暗証番号はメモリ内だけに保持され、保存されません。アイテムの受け渡しはゲーム内で行ってください。MM の支払いだけがここで確定します。</p>`;
   } else {
     h += `<p><b>${esc(me.mcid)}</b>　残高: <b>${balance} MM</b>　<button type="button" class="sub" onclick="doTradeLogout()">ログアウト</button></p>`;
-    // 本人確認 (認証サーバー方式)
+    // 本人確認 (対面コード方式)
     h += `<h3 style="margin-top:16px">本人確認</h3>`;
     if (tradeVerify && tradeVerify.verified) {
-      h += `<p>本人確認ずみ (UUID: ${esc((tradeVerify.uuid || "").slice(0, 8))}…)</p>`;
-    } else if (verifySession && verifySession.expiresAt > Date.now()) {
-      h += `<p class="hint">認証サーバーに参加し、チャットで次のコードを発言してください。</p>
-      <p style="font-size:28px;letter-spacing:4px;margin:8px 0"><b>${esc(verifySession.code)}</b></p>
-      <p>認証サーバー: ${VERIFY_SERVER ? esc(VERIFY_SERVER) : "アドレスは運営に確認してください"}</p>
-      <p class="hint">有効時間は発行から10分です。</p>
-      <p id="verify_status">確認待ちです。</p>`;
+      if (tradeVerify.verifiedBy) h += `<p>本人確認ずみ（確認者: ${esc(tradeVerify.verifiedBy)}）</p>`;
+      else if (tradeVerify.uuid) h += `<p>本人確認ずみ (UUID: ${esc(tradeVerify.uuid.slice(0, 8))}…)</p>`;
+      else h += `<p>本人確認ずみ</p>`;
     } else {
-      verifySession = null;
-      h += `<p class="hint">専用の認証サーバーに参加し、チャットで確認コードを発言すると、Minecraft アカウントの本人確認ができます。</p>
-      <p><button type="button" onclick="doTradeVerifyStart()">確認コードを発行する</button></p>`;
+      h += `<p class="hint">販売員に対面で発行してもらったコードを入力してください。</p>
+      <label class="f">本人確認コード</label><input id="tp_verify_code" autocomplete="off" maxlength="6" style="text-transform:uppercase">
+      <p><button type="button" onclick="doTradeVerifyWithCode()">本人確認する</button></p>`;
     }
     h += `
     <h3 style="margin-top:16px">送金</h3>
@@ -1580,22 +1602,22 @@ async function viewTrade(m = "", ok = true) {
   <p class="hint">送金台帳は全件公開され、ハッシュチェーンでつながっています。残高はこの台帳の合算です。</p></div>`;
   $main.innerHTML = h;
   if (tradeFocusId) document.getElementById("trade_detail")?.scrollIntoView();
-  if (verifySession && tradePlayer && !(tradeVerify && tradeVerify.verified) && verifySession.expiresAt > Date.now()) startVerifyPolling();
-  else stopVerifyPolling();
 }
-function tradeCredentials() { // プレイヤーパネルの入力を読む。{mcid, pin} か null (呼び出し側でエラー表示)
+function tradeCredentials() { // プレイヤーパネルの入力を読む (code は登録時だけ使う)
   const mcid = (document.getElementById("tp_mcid")?.value || "").trim();
   const pin = document.getElementById("tp_pin")?.value || "";
-  return {mcid, pin};
+  const code = (document.getElementById("tp_code")?.value || "").trim().toUpperCase();
+  return {mcid, pin, code};
 }
 async function doTradeRegister() {
   try {
-    const {mcid, pin} = tradeCredentials();
-    const data = await mmRpc("mm_register_player", {p_mcid: mcid, p_pin: pin});
+    const {mcid, pin, code} = tradeCredentials();
+    const data = await mmRpc("mm_register_player", {p_mcid: mcid, p_pin: pin, p_code: code});
     if (!data?.ok) return viewTrade(mmtErrText(data?.error), false);
     const login = await mmRpc("mm_login", {p_mcid: mcid, p_pin: pin});
     if (!login?.ok) return viewTrade("登録しました。ログインしてください。", true);
     tradePlayer = {mcid, pin};
+    tradeVerify = null;
     localStorage.setItem("mm_trade_mcid", mcid);
     viewTrade(`登録とログインが完了しました。残高は ${login.balance ?? 0}MM です。`);
   } catch (e) { viewTrade(esc(e.message), false); }
@@ -1606,53 +1628,26 @@ async function doTradeLogin() {
     const data = await mmRpc("mm_login", {p_mcid: mcid, p_pin: pin});
     if (!data?.ok) return viewTrade(mmtErrText(data?.error), false);
     tradePlayer = {mcid, pin};
+    tradeVerify = null;
     localStorage.setItem("mm_trade_mcid", mcid);
     viewTrade(`ログインしました。残高は ${data.balance ?? 0}MM です。`);
   } catch (e) { viewTrade(esc(e.message), false); }
 }
 function doTradeLogout() {
-  stopVerifyPolling();
-  verifySession = null;
   tradeVerify = null;
   tradePlayer = null;
   viewTrade("ログアウトしました。");
 }
-// ---- 本人確認 (認証サーバー方式) ----
-async function doTradeVerifyStart() {
+// ---- 本人確認 (対面コード方式) ----
+async function doTradeVerifyWithCode() {
   if (!tradePlayer) return viewTrade("先にログインしてください。", false);
   try {
-    const data = await mmRpc("mm_verify_start", {p_mcid: tradePlayer.mcid, p_pin: tradePlayer.pin});
+    const code = (document.getElementById("tp_verify_code")?.value || "").trim().toUpperCase();
+    const data = await mmRpc("mm_verify_with_code", {p_mcid: tradePlayer.mcid, p_pin: tradePlayer.pin, p_code: code});
     if (!data?.ok) return viewTrade(mmtErrText(data?.error), false);
-    verifySession = {code: data.code, expiresAt: Date.now() + (data.expires_in_sec || 600) * 1000};
-    viewTrade("確認コードを発行しました。");
+    tradeVerify = {verified: true, uuid: tradeVerify?.uuid || "", verifiedBy: data.verified_by || ""};
+    viewTrade("本人確認が完了しました。");
   } catch (e) { viewTrade(esc(e.message), false); }
-}
-function startVerifyPolling() {
-  stopVerifyPolling();
-  verifyTimer = setInterval(verifyPollTick, 5000);
-}
-function stopVerifyPolling() {
-  if (verifyTimer) { clearInterval(verifyTimer); verifyTimer = null; }
-}
-async function verifyPollTick() {
-  if (!verifySession || !tradePlayer || !(location.hash || "").startsWith("#trade")) { stopVerifyPolling(); return; }
-  const el = document.getElementById("verify_status");
-  if (Date.now() > verifySession.expiresAt) {
-    stopVerifyPolling();
-    verifySession = null;
-    if (el) el.textContent = "有効時間が切れました。もう一度発行してください。";
-    return;
-  }
-  if (el) el.textContent = `確認待ちです (残り約${Math.max(1, Math.ceil((verifySession.expiresAt - Date.now()) / 60000))}分)。`;
-  try {
-    const st = await mmRpc("mm_verify_status", {p_mcid: tradePlayer.mcid, p_pin: tradePlayer.pin});
-    if (st?.ok && st.verified) {
-      stopVerifyPolling();
-      verifySession = null;
-      tradeVerify = {verified: true, uuid: st.uuid || ""};
-      viewTrade("本人確認が完了しました。");
-    }
-  } catch (e) { /* 一時的な通信エラーは無視して次の回で再確認する */ }
 }
 async function doTradeSend() {
   if (!tradePlayer) return viewTrade("先にログインしてください。", false);
