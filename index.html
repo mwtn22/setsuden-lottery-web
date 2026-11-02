@@ -9,106 +9,101 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 :root{
-  --bg:#070b10; --panel:rgba(19,28,38,.82); --panel2:rgba(13,20,29,.9);
-  --line:rgba(110,231,238,.16); --line2:rgba(255,255,255,.08);
-  --txt:#eef6f7; --sub:#9db4ba;
-  --dia:#3ee6ee; --dia2:#19b8c4; --gold:#ffd94d; --gold2:#f5a623;
-  --acc:#17c964; --danger:#ff5a52; --radius:16px;
+  --bg:#f4f4f2; --panel:#ffffff; --panel2:#fafafa;
+  --line:#cfcfcf; --line2:#e2e2e2;
+  --txt:#222222; --sub:#666666;
+  --acc:#1d6fb8; --accbg:#e9f1f8;
+  --danger:#b03a2e; --radius:6px;
 }
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
-body{font-family:system-ui,'Hiragino Sans','Noto Sans JP',sans-serif;margin:0;color:var(--txt);
-  background:
-    radial-gradient(900px 480px at 85% -10%, rgba(62,230,238,.14), transparent 60%),
-    radial-gradient(700px 420px at -10% 20%, rgba(255,217,77,.07), transparent 55%),
-    linear-gradient(180deg,#070b10,#05080c 60%,#070b10);
-  min-height:100vh}
-header{position:sticky;top:0;z-index:30;background:rgba(7,11,16,.78);backdrop-filter:blur(14px);border-bottom:1px solid var(--line);padding:10px 16px}
+body{font-family:system-ui,'Hiragino Sans','Noto Sans JP',sans-serif;margin:0;color:var(--txt);background:var(--bg);min-height:100vh}
+header{position:sticky;top:0;z-index:30;background:#fff;border-bottom:1px solid var(--line);padding:10px 16px}
 header .row{max-width:1120px;margin:0 auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.logo{font-size:21px;font-weight:900;letter-spacing:.5px;background:linear-gradient(90deg,#fff,var(--dia));-webkit-background-clip:text;background-clip:text;color:transparent}
+.logo{font-size:19px;font-weight:800;color:var(--txt)}
 nav{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto}
-nav a{color:var(--txt);text-decoration:none;padding:8px 13px;border-radius:999px;background:rgba(255,255,255,.05);border:1px solid var(--line2);font-size:14px;transition:.15s}
-nav a:hover{border-color:var(--dia);transform:translateY(-1px)}
-nav a.on{background:linear-gradient(135deg,var(--dia),var(--dia2));color:#04222a;font-weight:800;border-color:transparent;box-shadow:0 4px 16px rgba(62,230,238,.35)}
-nav button{padding:8px 13px}
+nav a{color:var(--txt);text-decoration:none;padding:7px 11px;border-radius:6px;background:#fff;border:1px solid #c9c9c9;font-size:14px}
+nav a:hover{border-color:var(--acc);color:var(--acc)}
+nav a.on{background:var(--acc);color:#fff;font-weight:700;border-color:var(--acc)}
+nav button{padding:7px 11px}
 main{max-width:1120px;margin:0 auto;padding:18px 16px 90px}
-.card{background:var(--panel);border:1px solid var(--line2);border-radius:var(--radius);padding:20px;margin:16px 0;box-shadow:0 10px 30px rgba(0,0,0,.35);backdrop-filter:blur(8px)}
-.card.glow{border-color:rgba(255,217,77,.45);box-shadow:0 0 0 1px rgba(255,217,77,.25),0 12px 34px rgba(245,166,35,.15)}
-h2{margin:4px 0 10px;font-size:24px;font-weight:900} h3{margin:6px 0 8px;font-size:17px}
+.card{background:var(--panel);border:1px solid #d9d9d9;border-radius:var(--radius);padding:18px;margin:14px 0}
+.card.glow{border:2px solid #888}
+h2{margin:4px 0 10px;font-size:22px;font-weight:800} h3{margin:6px 0 8px;font-size:16px}
 .hint{color:var(--sub);font-size:13px;margin:4px 0 10px;line-height:1.6}
 label.f{display:block;font-size:13px;color:var(--sub);margin:14px 0 5px;font-weight:600}
-input,select,textarea{width:100%;background:var(--panel2);color:var(--txt);border:1px solid rgba(255,255,255,.14);border-radius:12px;padding:12px;font-size:16px;transition:.15s}
-input:focus,select:focus{outline:none;border-color:var(--dia);box-shadow:0 0 0 3px rgba(62,230,238,.22)}
-button,.btn{background:linear-gradient(135deg,#22d573,#0ea968);color:#fff;border:0;border-radius:12px;padding:11px 18px;cursor:pointer;font-size:15px;font-weight:800;text-decoration:none;display:inline-block;transition:.15s;box-shadow:0 6px 18px rgba(23,201,100,.25)}
-button:hover,.btn:hover{transform:translateY(-1px);filter:brightness(1.07)}
-button:active{transform:scale(.98)}
-button.big{width:100%;padding:16px;font-size:17px;margin-top:14px}
-button.danger{background:linear-gradient(135deg,#ff6b5e,#e33f35);box-shadow:0 6px 18px rgba(255,90,82,.25)}
-button.sub,.btn.sub{background:rgba(255,255,255,.07);border:1px solid var(--line2);box-shadow:none;font-weight:700}
-button:disabled{opacity:.45;cursor:default;transform:none}
+input,select,textarea{width:100%;background:#fff;color:var(--txt);border:1px solid #b5b5b5;border-radius:6px;padding:11px;font-size:16px}
+input:focus,select:focus,textarea:focus{outline:2px solid rgba(29,111,184,.35);border-color:var(--acc)}
+button,.btn{background:var(--acc);color:#fff;border:1px solid var(--acc);border-radius:6px;padding:10px 16px;cursor:pointer;font-size:15px;font-weight:700;text-decoration:none;display:inline-block}
+button:hover,.btn:hover{background:#185d9c}
+button.big{width:100%;padding:14px;font-size:16px;margin-top:14px}
+button.danger{background:var(--danger);border-color:var(--danger)}
+button.danger:hover{background:#933025}
+button.sub,.btn.sub{background:#fff;border:1px solid #b5b5b5;color:var(--txt);font-weight:600}
+button.sub:hover,.btn.sub:hover{border-color:var(--acc);color:var(--acc);background:#fff}
+button:disabled{opacity:.45;cursor:default}
 table{border-collapse:collapse;width:100%;font-size:14px}
 th,td{border-bottom:1px solid var(--line2);padding:8px;text-align:left}
 th{color:var(--sub);font-weight:600}
-.err{background:rgba(120,25,25,.85);border:1px solid rgba(255,90,82,.5);padding:12px 14px;border-radius:12px;margin:10px 0}
-.ok{background:rgba(16,80,45,.85);border:1px solid rgba(23,201,100,.5);padding:12px 14px;border-radius:12px;margin:10px 0}
+.err{background:#fbeeed;border:1px solid #d8a7a3;color:#7c231c;padding:11px 13px;border-radius:6px;margin:10px 0}
+.ok{background:#edf5ee;border:1px solid #a9c6ad;color:#21512a;padding:11px 13px;border-radius:6px;margin:10px 0}
 .kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
-.kpi .box{background:linear-gradient(160deg,rgba(255,255,255,.05),rgba(255,255,255,.015));border:1px solid var(--line2);border-radius:14px;padding:13px}
+.kpi .box{background:var(--panel2);border:1px solid var(--line2);border-radius:6px;padding:12px}
 .kpi .box span{color:var(--sub);font-size:12px;display:block;margin-bottom:3px}
-.kpi .box b{font-size:22px;font-weight:900}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(94px,1fr));gap:9px}
-.cell{background:var(--panel2);border:1px solid var(--line2);border-radius:12px;padding:10px;text-align:center;transition:.15s}
-.cell.hot{border-color:rgba(255,217,77,.55)}
-.cell.win{border-color:var(--gold);background:linear-gradient(160deg,rgba(255,217,77,.28),rgba(245,166,35,.10));box-shadow:0 0 18px rgba(255,217,77,.25)}
-.num{font-size:21px;font-weight:900}
+.kpi .box b{font-size:21px;font-weight:800}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(94px,1fr));gap:8px}
+.cell{background:#fff;border:1px solid var(--line2);border-radius:6px;padding:10px;text-align:center}
+.cell.hot{border-color:#999}
+.cell.win{border:2px solid var(--acc);background:var(--accbg)}
+.num{font-size:20px;font-weight:800}
 .small{font-size:12px;color:var(--sub)}
 .seg{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0}
-.seg button{background:rgba(255,255,255,.06);border:1px solid var(--line2);color:var(--txt);font-weight:700;box-shadow:none;padding:12px 16px}
-.seg button.on{background:linear-gradient(135deg,var(--dia),var(--dia2));color:#04222a;border-color:transparent;box-shadow:0 6px 18px rgba(62,230,238,.3)}
+.seg button{background:#fff;border:1px solid #b5b5b5;color:var(--txt);font-weight:600;padding:11px 15px}
+.seg button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
 .pick{display:grid;grid-template-columns:repeat(auto-fill,minmax(66px,1fr));gap:8px;margin-top:8px}
-.pick button{position:relative;background:var(--panel2);border:1px solid var(--line2);color:var(--txt);padding:11px 2px;border-radius:12px;font-weight:800;font-size:17px;box-shadow:none}
+.pick button{position:relative;background:#fff;border:1px solid #b5b5b5;color:var(--txt);padding:11px 2px;border-radius:6px;font-weight:700;font-size:17px}
 .pick button small{display:block;font-weight:500;color:var(--sub);font-size:11px;margin-top:2px}
-.pick button.sel{background:linear-gradient(160deg,rgba(62,230,238,.30),rgba(25,184,196,.12));border-color:var(--dia);box-shadow:0 0 14px rgba(62,230,238,.28)}
-.pick button .cnt{position:absolute;top:-8px;right:-6px;background:linear-gradient(135deg,var(--gold),var(--gold2));color:#231a00;border-radius:999px;font-size:12px;padding:2px 8px;font-weight:900;box-shadow:0 3px 8px rgba(0,0,0,.4)}
-.pick.minus button.sel{background:linear-gradient(160deg,rgba(255,90,82,.30),rgba(255,90,82,.10));border-color:var(--danger);box-shadow:0 0 14px rgba(255,90,82,.25)}
-.chip{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.06);border:1px solid var(--line2);border-radius:999px;padding:9px 14px;font-size:14px;cursor:pointer;margin:3px 4px 3px 0}
+.pick button.sel{background:var(--accbg);border-color:var(--acc)}
+.pick button .cnt{position:absolute;top:-8px;right:-6px;background:#333;color:#fff;border-radius:999px;font-size:12px;padding:2px 8px;font-weight:800}
+.pick.minus button.sel{background:#fbeeed;border-color:var(--danger)}
+.chip{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid #c9c9c9;border-radius:999px;padding:8px 13px;font-size:14px;cursor:pointer;margin:3px 4px 3px 0}
 .chip input{width:auto}
-.qchip{background:rgba(62,230,238,.10);border:1px solid rgba(62,230,238,.35);color:var(--txt);border-radius:999px;padding:7px 13px;font-size:13px;cursor:pointer;margin:2px 3px;box-shadow:none;font-weight:700}
-.selchip{background:linear-gradient(135deg,var(--gold),var(--gold2));color:#231a00;border:0;border-radius:999px;padding:6px 12px;font-size:13px;font-weight:900;cursor:pointer;margin:2px 3px;box-shadow:0 3px 10px rgba(245,166,35,.3)}
+.qchip{background:#fff;border:1px solid #b5b5b5;color:var(--txt);border-radius:999px;padding:7px 13px;font-size:13px;cursor:pointer;margin:2px 3px;font-weight:600}
+.selchip{background:#333;color:#fff;border:1px solid #333;border-radius:999px;padding:6px 12px;font-size:13px;font-weight:700;cursor:pointer;margin:2px 3px}
 .stepper{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.stepper button{padding:9px 15px}
+.stepper button{padding:9px 14px}
 .stepper input{width:90px;text-align:center}
-.badge{display:inline-block;background:rgba(255,255,255,.07);border:1px solid var(--line2);border-radius:999px;padding:3px 11px;font-size:12px;color:var(--sub)}
-.balls{display:flex;gap:10px;flex-wrap:wrap;margin:8px 0}
-.ball{width:64px;height:64px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:900;color:#231a00;background:radial-gradient(circle at 32% 30%,#fff3b0,var(--gold) 55%,var(--gold2));box-shadow:0 8px 20px rgba(245,166,35,.4),inset 0 -6px 12px rgba(0,0,0,.18)}
-.ball small{position:absolute}
-.stickybar{position:fixed;left:0;right:0;bottom:0;z-index:40;background:rgba(7,11,16,.88);backdrop-filter:blur(14px);border-top:1px solid var(--line);padding:10px 14px}
+.badge{display:inline-block;background:#f0f0f0;border:1px solid #c9c9c9;border-radius:999px;padding:3px 11px;font-size:12px;color:var(--sub)}
+.balls{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+.ball{min-width:54px;height:54px;padding:0 10px;border:2px solid #333;border-radius:6px;background:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;color:var(--txt)}
+.stickybar{position:fixed;left:0;right:0;bottom:0;z-index:40;background:#fff;border-top:1px solid var(--line);padding:10px 14px}
 .stickybar .in{max-width:1120px;margin:0 auto;display:flex;align-items:center;gap:12px}
 .stickybar .sum{font-size:15px;white-space:nowrap}
-.stickybar button{flex:1;padding:14px;font-size:16px}
+.stickybar button{flex:1;padding:13px;font-size:16px}
 .scroll{overflow-x:auto}
 .tabbar{display:none}
 .bookpage{width:100%;min-height:150px;font-family:ui-monospace,monospace;font-size:14px;line-height:1.5;white-space:pre-wrap}
 @media (max-width:860px){
   header nav{display:none}
-  .tabbar{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:50;background:rgba(7,11,16,.92);backdrop-filter:blur(14px);border-top:1px solid var(--line);padding:6px 4px calc(6px + env(safe-area-inset-bottom))}
-  .tabbar a{flex:1;text-align:center;color:var(--sub);text-decoration:none;font-size:11px;padding:7px 0 5px;border-radius:12px}
-  .tabbar a .ic{display:block;font-size:21px;line-height:1.15}
-  .tabbar a.on{color:#04222a;background:linear-gradient(135deg,var(--dia),var(--dia2));font-weight:800}
+  .tabbar{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:50;background:#fff;border-top:1px solid var(--line);padding:6px 4px calc(6px + env(safe-area-inset-bottom))}
+  .tabbar a{flex:1;text-align:center;color:var(--sub);text-decoration:none;font-size:12px;padding:8px 0;border-radius:6px}
+  .tabbar a .ic{display:none}
+  .tabbar a.on{color:var(--acc);background:var(--accbg);font-weight:700}
   main{padding-bottom:120px}
-  .stickybar{bottom:64px}
+  .stickybar{bottom:56px}
   .pick{grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:9px}
   .pick button{padding:14px 2px;font-size:18px}
   .grid{grid-template-columns:repeat(auto-fill,minmax(100px,1fr))}
-  button,.btn{padding:13px 18px}
+  button,.btn{padding:12px 16px}
   th,td{padding:9px 7px}
 }
-.hero{padding:26px 20px;background:linear-gradient(135deg,rgba(62,230,238,.14),rgba(255,217,77,.08) 60%,transparent);border:1px solid var(--line);border-radius:var(--radius);margin:16px 0;box-shadow:0 12px 34px rgba(0,0,0,.35)}
-.hero .big{font-size:30px;font-weight:900}
-@media (max-width:640px){ .ball{width:54px;height:54px;font-size:21px} main{padding:14px 12px 110px} }
+.hero{padding:18px;background:#fff;border:1px solid #d9d9d9;border-radius:var(--radius);margin:14px 0}
+.hero .big{font-size:24px;font-weight:800}
+@media (max-width:640px){ .ball{min-width:48px;height:48px;font-size:20px} main{padding:14px 12px 110px} }
 </style>
 </head>
 <body>
-<header><div class="row"><span class="logo">🎟 節電鯖 宝くじ</span><nav id="nav"></nav></div></header>
+<header><div class="row"><span class="logo">節電鯖 宝くじ</span><nav id="nav"></nav></div></header>
 <main id="main"></main>
 <div id="tabbar" class="tabbar"></div>
 <script>
@@ -200,9 +195,9 @@ function renderNav() {
   const hRaw = (location.hash || "#public").slice(1);
   const h = hRaw.startsWith("trade-") ? "trade" : hRaw;
   const link = (hash, label) => `<a href="#${hash}" class="${h === hash ? "on" : ""}">${label}</a>`;
-  if (!session) $nav.innerHTML = link("public", "📊 みんなの実績") + link("claim", "🕹 自販機で買った方") + link("trade", "🤝 MM取引") + link("login", "🔑 販売員ログイン");
+  if (!session) $nav.innerHTML = link("public", "みんなの実績") + link("claim", "自販機で買った方") + link("trade", "MM取引") + link("login", "販売員ログイン");
   else if (!profile || !profile.active) $nav.innerHTML = `<span class="badge">${esc(profile?.username || "")}：有効化まち</span><button class="sub" onclick="logout()">ログアウト</button>`;
-  else $nav.innerHTML = link("app", "🏠 ホーム") + link("sell", "🎟 売る") + link("lots", "🕹 自販機") + link("donations", "🎁 寄付") + link("numbers", "🔢 番号一覧") + link("winners", "🏆 当選・引換") + link("manage", "🛠 券の管理") + link("book", "📖 本") + link("proposals", "🤝 提案") + link("mm", "💱 MM") + link("trade", "🤝 MM取引")
+  else $nav.innerHTML = link("app", "ホーム") + link("sell", "売る") + link("lots", "自販機") + link("donations", "寄付") + link("numbers", "番号一覧") + link("winners", "当選・引換") + link("manage", "券の管理") + link("book", "本") + link("proposals", "提案") + link("mm", "MM") + link("trade", "MM取引")
     + (profile.role === "admin" ? link("rounds", "回・設定") + link("users", "販売員") + link("audit", "記録") : "")
     + `<span class="badge">${esc(profile.username)}</span><button class="sub" onclick="logout()">ログアウト</button>`;
 }
@@ -211,9 +206,9 @@ function renderTabbar() {
   const h = hRaw.startsWith("trade-") ? "trade" : hRaw;
   const tab = (hash, ic, label) => `<a href="#${hash}" class="${h === hash ? "on" : ""}"><span class="ic">${ic}</span>${label}</a>`;
   const el = document.getElementById("tabbar");
-  if (!session) el.innerHTML = tab("public", "📊", "実績") + tab("claim", "🕹", "自販機") + tab("trade", "🤝", "取引") + tab("login", "🔑", "ログイン");
-  else if (!profile || !profile.active) el.innerHTML = tab("public", "📊", "実績") + tab("claim", "🕹", "自販機");
-  else el.innerHTML = tab("app", "🏠", "ホーム") + tab("sell", "🎟", "売る") + tab("lots", "🕹", "自販機") + tab("winners", "🏆", "当選") + tab("book", "📖", "本") + tab("proposals", "🤝", "提案") + tab("mm", "💱", "MM") + tab("more", "☰", "その他");
+  if (!session) el.innerHTML = tab("public", "", "実績") + tab("claim", "", "自販機") + tab("trade", "", "取引") + tab("login", "", "ログイン");
+  else if (!profile || !profile.active) el.innerHTML = tab("public", "", "実績") + tab("claim", "", "自販機");
+  else el.innerHTML = tab("app", "", "ホーム") + tab("sell", "", "売る") + tab("lots", "", "自販機") + tab("winners", "", "当選") + tab("book", "", "本") + tab("proposals", "", "提案") + tab("mm", "", "MM") + tab("more", "", "その他");
 }
 async function logout() { await sb.auth.signOut(); session = null; profile = null; location.hash = "#public"; render(); }
 
@@ -222,7 +217,7 @@ async function viewPublic() {
   $main.innerHTML = "<p>読み込み中…</p>";
   let mmPub = null;
   try { const {data} = await sb.from("mm_public").select("*").eq("id", 1).maybeSingle(); mmPub = data || null; } catch { mmPub = null; }
-  const mmSection = mmPub ? `<div class="card"><h3>💱 めうまねー (MM)</h3>
+  const mmSection = mmPub ? `<div class="card"><h3>めうまねー (MM)</h3>
   <p class="hint">節電鯖の独自通貨です。1MM = ダイヤ1個で、いつでも両替できます。台帳はハッシュチェーンで記録されていて、後から書き換えると検出できます。</p>
   <div class="kpi">
     <div class="box"><span>流通中の MM</span><b>${mmPub.circulating} MM</b></div>
@@ -232,7 +227,7 @@ async function viewPublic() {
     <div class="box"><span>この情報の更新</span><b style="font-size:13px">${fmtTime(mmPub.updated_at)}</b></div>
   </div></div>` : "";
   const {data: rounds} = await sb.from("public_rounds").select("*").order("id", {ascending: false});
-  if (!rounds || !rounds.length) { $main.innerHTML = `<div class="card"><h2>宝くじ</h2><p>まだ始まっていません。次回をお楽しみに！</p></div>` + mmSection; return; }
+  if (!rounds || !rounds.length) { $main.innerHTML = `<div class="card"><h2>宝くじ</h2><p>まだ始まっていません。まだ始まっていません。</p></div>` + mmSection; return; }
   const rnd = currentRound && rounds.find(r => r.id === currentRound) || rounds[0];
   currentRound = rnd.id;
   const {data: stats} = await sb.from("public_number_stats").select("*").eq("round_id", rnd.id);
@@ -240,20 +235,20 @@ async function viewPublic() {
   (stats || []).forEach(s => { counts[s.number] = s.tickets; total += s.tickets; });
   const winList = rnd.winning_numbers || [];
   const picker = rounds.length > 1 ? `<div class="card">見たい回：<select onchange="currentRound=+this.value;viewPublic()">${rounds.map(r => `<option value="${r.id}" ${r.id === rnd.id ? "selected" : ""}>${esc(r.name)}（${STATUS_JP[r.status] || esc(r.status)}）</option>`).join("")}</select></div>` : "";
-  let h = `<div class="hero"><div class="big">🎟 ${esc(rnd.name)}</div><p class="hint" style="margin-bottom:0">1枚 ${rnd.price} D ／ 当選番号は ${rnd.win_count} 個 ／ 買った人の名前は公開されません</p></div>${picker}`;
+  let h = `<div class="hero"><div class="big">${esc(rnd.name)}</div><p class="hint" style="margin-bottom:0">1枚 ${rnd.price} D ／ 当選番号は ${rnd.win_count} 個 ／ 買った人の名前は公開されません</p></div>${picker}`;
   h += `<div class="card"><div class="kpi">
     <div class="box"><span>売れた枚数</span><b>${total} 枚</b></div>
     <div class="box"><span>集まった金額</span><b>${total * rnd.price} D</b></div>
     <div class="box"><span>1枚の値段</span><b>${rnd.price} D</b></div>
     <div class="box"><span>当たる確率（1枚）</span><b>${(rnd.win_count / 81 * 100).toFixed(1)}%</b></div>
     <div class="box"><span>いまの状態</span><b>${STATUS_JP[rnd.status] || esc(rnd.status)}</b></div></div></div>`;
-  if (winList.length) h += `<div class="card glow"><h3>🎉 当選番号</h3><div class="balls">${[...winList].sort((a, b) => a - b).map(n => `<div class="ball">${n}</div>`).join("")}</div><p class="hint">同じ番号が2回出たら、配当も2回分もらえます。</p></div>`;
+  if (winList.length) h += `<div class="card glow"><h3>当選番号</h3><div class="balls">${[...winList].sort((a, b) => a - b).map(n => `<div class="ball">${n}</div>`).join("")}</div><p class="hint">同じ番号が2回出たら、配当も2回分もらえます。</p></div>`;
   const mult = {}; winList.forEach(n => mult[n] = (mult[n] || 0) + 1);
   const cells = VALID_NUMBERS.map(n => {
     const cnt = counts[n] || 0;
     const per = cnt ? payoutPerTicket(total, rnd.price, rnd.win_count, cnt, rnd.payout_rate) : 0;
     const cls = mult[n] ? "cell win" : (cnt ? "cell hot" : "cell");
-    const label = mult[n] && cnt ? `当選！1枚 ${per * mult[n]}D` : (cnt ? `当たれば1枚 ${per}D` : "まだ売れてない");
+    const label = mult[n] && cnt ? `当選。1枚 ${per * mult[n]}D` : (cnt ? `当たれば1枚 ${per}D` : "まだ売れてない");
     return `<div class="${cls}"><div class="num">${n}</div><div>${cnt} 枚</div><div class="small">${label}</div></div>`;
   }).join("");
   h += `<div class="card"><h3>番号ごとの売れ行き</h3><p class="hint">買った人の名前は公開されません。配当は「集まった金額 ÷ 当選番号の数 ÷ その番号を買った枚数」で決まります。</p><div class="grid">${cells}</div></div>`;
@@ -267,15 +262,15 @@ function viewClaim(m = "", ok = true) {
   <p>券と一緒に入っていた紙に書かれた<b>「販売管理ID」</b>と、あなたの <b>Minecraft ID</b> を入れてください。それで券があなたのものとして登録されます。</p>
   <label class="f">あなたの Minecraft ID</label><input id="c_buyer" maxlength="32" placeholder="例: Steve_123">
   <label class="f">販売管理ID（紙に書かれた5けたの数字）</label><input id="c_code" maxlength="8" inputmode="numeric" placeholder="例: 12345">
-  <p class="hint">何回も間違えると、しばらく入力できなくなります。紙をよく見てね。</p>
+  <p class="hint">入力を繰り返し間違えると、しばらく入力できなくなります。紙の記載を確認してから入力すること。</p>
   <button class="big" onclick="doClaim()">券を登録する</button></div>`;
 }
 async function doClaim() {
   const buyer = document.getElementById("c_buyer").value.trim();
   const code = document.getElementById("c_code").value.trim();
   const {data, error} = await sb.rpc("claim_lot", {p_buyer: buyer, p_sale_code: code});
-  if (error) return viewClaim("通信エラーです。時間をおいてもう一度どうぞ。", false);
-  if (data?.ok) return viewClaim(`登録できました！ あなたの番号: ${data.numbers.join(", ")}（${data.numbers.length}枚）。抽選をお楽しみに！`);
+  if (error) return viewClaim("通信エラーが発生しました。時間をおいて再度試してください。", false);
+  if (data?.ok) return viewClaim(`登録が完了しました。あなたの番号: ${data.numbers.join(", ")}（${data.numbers.length}枚）`);
   const map = {locked: "間違いが続いたので、しばらく入力できません。販売員に声をかけてください。", bad_buyer: "Minecraft ID の書き方が違います。", not_found: "その販売管理IDは見つからないか、もう登録ずみです。"};
   viewClaim(map[data?.error] || "登録できませんでした。", false);
 }
@@ -361,7 +356,7 @@ async function viewApp(m = "", ok = true) {
     <div class="box"><span>自販機ロット</span><b>在庫 ${stocked} / 登録ずみ ${claimed}</b></div>
     <div class="box"><span>寄付の合計</span><b>${donSum.db} DB</b></div>
     <div class="box"><span>寄付でもらえる券（残り）</span><b>${donSum.rest} 枚</b></div></div>
-    <p><a class="btn" href="#sell">🎟 券を売る</a> <a class="btn sub" href="#winners">当選・引換へ</a></p></div>`;
+    <p><a class="btn" href="#sell">券を売る</a> <a class="btn sub" href="#winners">当選・引換へ</a></p></div>`;
   const recent = tickets.slice(-12).reverse();
   h += `<div class="card"><h3>最近の販売</h3><div class="scroll"><table><tr><th>買った人</th><th>番号</th><th>売り方</th><th>売った人</th><th>金額</th></tr>${recent.map(t => `<tr><td>${esc(t.buyer)}</td><td>${t.number}</td><td>${SOURCE_JP[t.source] || esc(t.source)}</td><td>${esc(t.seller)}</td><td>${t.amount_paid}D</td></tr>`).join("")}</table></div></div>`;
   $main.innerHTML = h;
@@ -391,7 +386,7 @@ async function viewSell(m = "", ok = true) {
     return `<button type="button" class="${sel ? "sel" : ""}" onclick="sellTap(${n})">${n}<small>売れた ${sellCounts[n] || 0}枚</small>${sel ? `<span class="cnt">${sel}口</span>` : ""}</button>`;
   }).join("");
   const seg = (v, label) => `<button type="button" class="${sellSource === v ? "on" : ""}" onclick="sellSource='${v}';viewSell()">${label}</button>`;
-  $main.innerHTML = msg(m, ok) + roundPicker(rounds, "#sell") + `<div class="card"><h2>🎟 券を売る</h2>
+  $main.innerHTML = msg(m, ok) + roundPicker(rounds, "#sell") + `<div class="card"><h2>券を売る</h2>
   <p class="hint">${esc(rnd.name)} ／ 1枚 ${rnd.price} D ／ 状態: ${STATUS_JP[rnd.status] || esc(rnd.status)}${["preparing", "selling"].includes(rnd.status) ? "" : "（いまは売れません）"}</p>
   <label class="f">① 買う人の Minecraft ID</label><input id="s_buyer" maxlength="32" placeholder="例: Steve_123" value="${esc(window._sellBuyer || "")}" oninput="window._sellBuyer=this.value">
   ${recentBuyers.length ? `<div style="margin-top:6px">${recentBuyers.map(b => `<button type="button" class="qchip" onclick="setBuyer('${esc(b)}')">${esc(b)}</button>`).join("")}<span class="small">← 最近買った人（タップで入力）</span></div>` : ""}
@@ -399,7 +394,7 @@ async function viewSell(m = "", ok = true) {
   <div class="seg">${seg("face", "ふつうに売る")}${seg("sponsor", "スポンサー券")}${seg("donation", "寄付の引換で渡す")}</div>
   ${sellSource === "donation" ? `<label class="f">どの寄付の引換ですか</label><select id="s_donation"><option value="">選んでください</option>${avail.map(d => `<option value="${d.id}">${esc(d.donor)}（あと ${d.tickets_entitled - d.tickets_issued} 枚わたせる）</option>`).join("")}</select>` : ""}
   <label class="f">支払う通貨（1D = 1MM）</label>
-  <div class="seg"><button type="button" class="${sellCurrency === "D" ? "on" : ""}" onclick="sellCurrency='D';viewSell()">💎 ダイヤ</button><button type="button" class="${sellCurrency === "MM" ? "on" : ""}" onclick="sellCurrency='MM';viewSell()">💱 MM（めうまねー）</button></div>
+  <div class="seg"><button type="button" class="${sellCurrency === "D" ? "on" : ""}" onclick="sellCurrency='D';viewSell()">ダイヤ</button><button type="button" class="${sellCurrency === "MM" ? "on" : ""}" onclick="sellCurrency='MM';viewSell()">MM（めうまねー）</button></div>
   <label class="f">③ 番号をタップで選ぶ</label>
   <div class="seg">
     <button type="button" id="mode_add" class="${sellMode === "add" ? "on" : ""}" onclick="setSellMode('add')">＋ ふやすモード</button>
@@ -410,11 +405,11 @@ async function viewSell(m = "", ok = true) {
   <p id="sell_sum" style="margin-top:6px">${sellSummaryHtml()}</p>
   <div class="stepper"><span>おまかせで足す：</span><button type="button" onclick="stepOmakase(-1)">−</button><input id="s_omakase" type="number" value="10" min="1" max="200"><button type="button" onclick="stepOmakase(1)">＋</button><button type="button" class="sub" onclick="sellOmakase()">おまかせで追加</button></div>
   <p>
-    <label class="chip"><input type="checkbox" id="s_benefit"> 🎁 寄付の特典としてタダで渡す</label>
-    <label class="chip"><input type="checkbox" id="s_staff"> 🧑 自分（販売員）が買う${rnd.staff_discount ? "（1割引あり）" : "（割引はOFFの回です）"}</label>
+    <label class="chip"><input type="checkbox" id="s_benefit"> 寄付の特典としてタダで渡す</label>
+    <label class="chip"><input type="checkbox" id="s_staff"> 自分（販売員）が買う${rnd.staff_discount ? "（1割引あり）" : "（割引はOFFの回です）"}</label>
   </p>
   <button class="sub" onclick="sellSel={};viewSell()">選び直す</button></div>
-  <div class="stickybar"><div class="in"><span class="sum" id="bar_sum">${barSumHtml()}</span><button onclick="doSell()">🎟 この内容で販売する</button></div></div>`;
+  <div class="stickybar"><div class="in"><span class="sum" id="bar_sum">${barSumHtml()}</span><button onclick="doSell()">この内容で販売する</button></div></div>`;
 }
 let sellMode = "add";
 function setBuyer(b) { window._sellBuyer = b; const el = document.getElementById("s_buyer"); if (el) el.value = b; }
@@ -497,7 +492,7 @@ async function doSell() {
     await audit("sell", `round=${rnd.id} buyer=${buyer} numbers=${numbers} source=${sellSource} currency=${sellCurrency}`);
     const doneTotal = numbers.length, doneList = numbers.join(", ");
     sellSel = {}; window._sellBuyer = "";
-    viewSell(`${esc(buyer)} さんに ${doneTotal} 枚売りました（番号: ${doneList}／金額の目安 ${amountEach * doneTotal}${sellCurrency === "MM" ? "MM" : "D"}）<br><a href="#book" onclick="window._bookKind='ticket';window._bookBuyer='${esc(buyer)}'">📖 この人の「券の本」用テキストを作る</a>`);
+    viewSell(`${esc(buyer)} さんに ${doneTotal} 枚売りました（番号: ${doneList}／金額の目安 ${amountEach * doneTotal}${sellCurrency === "MM" ? "MM" : "D"}）<br><a href="#book" onclick="window._bookKind='ticket';window._bookBuyer='${esc(buyer)}'">この人の「券の本」用テキストを作る</a>`);
   } catch (e) { viewSell(esc(e.message), false); }
 }
 
@@ -569,7 +564,7 @@ async function viewDonations(m = "", ok = true) {
   const {data: dons} = await sb.from("donations").select("*").eq("round_id", rnd.id).order("id");
   const rows = (dons || []).map(d => `<tr><td>${esc(d.donor)}</td><td>${d.amount_db} DB</td><td>${d.tickets_entitled} 枚</td><td>${d.tickets_entitled - d.tickets_issued} 枚</td><td>${esc(d.note)}</td></tr>`).join("");
   $main.innerHTML = msg(m, ok) + roundPicker(rounds, "#donations") + `<div class="card"><h2>寄付の受付</h2>
-  <p class="hint">寄付 5DB ごとに、宝くじ1枚を渡せます。券を渡すときは「売る」画面で「寄付の引換で渡す」を選んでね。</p>
+  <p class="hint">寄付 5DB ごとに、宝くじ1枚を渡せます。券を渡すときは「売る」画面で「寄付の引換で渡す」を選択すること。</p>
   <label class="f">寄付した人の Minecraft ID</label><input id="d_donor">
   <label class="f">寄付の額（DB）</label><input id="d_db" type="number" min="1" placeholder="例: 10（→ 券2枚ぶん）">
   <label class="f">メモ（任意）</label><input id="d_note">
@@ -607,7 +602,7 @@ async function viewNumbers() {
   h += `</div></div>`;
   const agg = {};
   tickets.filter(t => t.status === "valid").forEach(t => { const a = agg[t.buyer] ||= {cnt: 0, paid: 0}; a.cnt++; a.paid += t.amount_paid; });
-  const rows = Object.entries(agg).sort((a, b) => b[1].cnt - a[1].cnt).map(([b, a]) => `<tr><td>${esc(b)}</td><td>${a.cnt} 枚</td><td>${total ? (a.cnt / total * 100).toFixed(1) : 0}%</td><td>${a.paid}D</td><td><button class="sub" onclick="window._bookKind='ticket';window._bookBuyer='${esc(b)}';location.hash='#book'">📖 券の本</button></td></tr>`).join("");
+  const rows = Object.entries(agg).sort((a, b) => b[1].cnt - a[1].cnt).map(([b, a]) => `<tr><td>${esc(b)}</td><td>${a.cnt} 枚</td><td>${total ? (a.cnt / total * 100).toFixed(1) : 0}%</td><td>${a.paid}D</td><td><button class="sub" onclick="window._bookKind='ticket';window._bookBuyer='${esc(b)}';location.hash='#book'">券の本</button></td></tr>`).join("");
   h += `<div class="card"><h3>買った人ごと</h3><div class="scroll"><table><tr><th>買った人</th><th>枚数</th><th>全体に占める割合</th><th>払った金額</th><th></th></tr>${rows}</table></div></div>`;
   $main.innerHTML = h;
 }
@@ -619,10 +614,10 @@ async function viewWinners(m = "", ok = true) {
   let h = msg(m, ok) + roundPicker(rounds, "#winners");
   const winList = rnd.winning_numbers || [];
   if (profile.role === "admin" && !winList.length && ["closed", "selling", "preparing"].includes(rnd.status)) {
-    h += `<div class="card"><h2>抽選する</h2><p class="hint">販売を終えてから押してください。売れた番号の中から ${rnd.win_count} 個を引きます。同じ番号が2回出ることもあって、そのときは配当も2回分です。</p><button class="danger big" onclick="doDraw()">🎲 抽選する</button></div>`;
+    h += `<div class="card"><h2>抽選する</h2><p class="hint">販売を終えてから押してください。売れた番号の中から ${rnd.win_count} 個を引きます。同じ番号が2回出ることもあって、そのときは配当も2回分です。</p><button class="danger big" onclick="doDraw()">抽選する</button></div>`;
   }
   if (!winList.length) { h += `<div class="card">まだ抽選していません。</div>`; $main.innerHTML = h; return; }
-  h += `<div class="card glow"><h2>🎉 当選番号</h2><div class="balls">${[...winList].sort((a, b) => a - b).map(n => `<div class="ball">${n}</div>`).join("")}</div><p class="hint">抽選した日: ${esc((rnd.drawn_at || "").slice(0, 10))} ／ 抽選した人: ${esc(rnd.drawn_by || "")}</p>`;
+  h += `<div class="card glow"><h2>当選番号</h2><div class="balls">${[...winList].sort((a, b) => a - b).map(n => `<div class="ball">${n}</div>`).join("")}</div><p class="hint">抽選した日: ${esc((rnd.drawn_at || "").slice(0, 10))} ／ 抽選した人: ${esc(rnd.drawn_by || "")}</p>`;
   if (profile.role === "admin") h += `<button class="sub" onclick="doDrawReset()">抽選をや直す（取消）</button>`;
   h += `</div>`;
   const tickets = await fetchTickets(rnd.id);
@@ -634,11 +629,11 @@ async function viewWinners(m = "", ok = true) {
   const rows = Object.entries(winners).sort((a, b) => b[1].gross - a[1].gross).map(([buyer, w]) => {
     const fee = redemptionFee(w.gross, w.isSponsor, todayISO(), rnd);
     const feeTxt = fee === null ? "期限を過ぎています（要相談）" : (fee === 0 ? `手数料なし → ${w.gross}D（=${w.gross}MM）渡す` : `手数料 ${fee}D → ${w.gross - fee}D（=${w.gross - fee}MM）渡す`);
-    const state = redeemedBuyers.has(buyer) ? "✅ 渡した" : `<button onclick="doRedeem('${esc(buyer)}')">渡したことにする</button>`;
+    const state = redeemedBuyers.has(buyer) ? "渡した" : `<button onclick="doRedeem('${esc(buyer)}')">渡したことにする</button>`;
     return `<tr><td>${esc(buyer)}</td><td>${w.winTickets.join(", ")}</td><td>${w.gross}D（=${w.gross}MM）</td><td>${w.isSponsor ? "寄付・スポンサー" : "ふつう"}</td><td>${feeTxt}</td><td>${state}</td></tr>`;
   }).join("");
-  h += `<div class="card"><h3>当選した人</h3><p class="hint">渡せる期間: 手数料なしは ${esc(rnd.redeem_free_until || "未設定")} まで ／ 手数料1割で ${esc(rnd.redeem_ext_until || "未設定")} まで ／ 寄付・スポンサーは ${esc(rnd.sponsor_redeem_until || "未設定")} まで手数料なし。渡すときは券を見せてもらってね。</p><div class="scroll"><table><tr><th>当選した人</th><th>当たった番号</th><th>配当</th><th>区分</th><th>今日渡す場合</th><th>引換</th></tr>${rows}</table></div></div>`;
-  h += `<div class="card"><h3>お金の内訳</h3><p>配当のもと（集まった金額 × ${rnd.payout_rate}%）: ${fund}D（=${fund}MM）／ 当選した人へ合計: ${grossSum}D（=${grossSum}MM）／ <b>余った ${fund - grossSum}D（=${fund - grossSum}MM）は Gate07 へ寄付</b></p><button class="sub" onclick="window._bookKind='winners';location.hash='#book'">📖 当選発表の本を作る</button></div>`;
+  h += `<div class="card"><h3>当選した人</h3><p class="hint">渡せる期間: 手数料なしは ${esc(rnd.redeem_free_until || "未設定")} まで ／ 手数料1割で ${esc(rnd.redeem_ext_until || "未設定")} まで ／ 寄付・スポンサーは ${esc(rnd.sponsor_redeem_until || "未設定")} まで手数料なし。渡すときは券の提示を受けること。</p><div class="scroll"><table><tr><th>当選した人</th><th>当たった番号</th><th>配当</th><th>区分</th><th>今日渡す場合</th><th>引換</th></tr>${rows}</table></div></div>`;
+  h += `<div class="card"><h3>お金の内訳</h3><p>配当のもと（集まった金額 × ${rnd.payout_rate}%）: ${fund}D（=${fund}MM）／ 当選した人へ合計: ${grossSum}D（=${grossSum}MM）／ <b>余った ${fund - grossSum}D（=${fund - grossSum}MM）は Gate07 へ寄付</b></p><button class="sub" onclick="window._bookKind='winners';location.hash='#book'">当選発表の本を作る</button></div>`;
   if (reds && reds.length) h += `<div class="card"><h3>渡した記録</h3><div class="scroll"><table><tr><th>当選した人</th><th>配当</th><th>手数料</th><th>渡した額</th><th>担当</th></tr>${reds.map(r => `<tr><td>${esc(r.buyer)}</td><td>${r.gross}D（=${r.gross}MM）</td><td>${r.fee}D</td><td>${r.net}D（=${r.net}MM）</td><td>${esc(r.redeemed_by)}</td></tr>`).join("")}</table></div></div>`;
   $main.innerHTML = h;
 }
@@ -786,7 +781,7 @@ async function doExportCsv() {
 // ---- 販売員（管理者） ----
 async function viewUsers(m = "", ok = true) {
   const {data: users} = await sb.from("profiles").select("*").order("created_at");
-  const rows = (users || []).map(u => `<tr><td>${esc(u.username)}</td><td><select id="role_${u.id}" style="width:auto"><option value="seller" ${u.role === "seller" ? "selected" : ""}>販売員</option><option value="admin" ${u.role === "admin" ? "selected" : ""}>管理者</option></select></td><td>${u.active ? "✅ 使える" : "まだ使えない"}</td><td><button class="sub" onclick="doUserSave('${u.id}')">有効化して保存</button></td></tr>`).join("");
+  const rows = (users || []).map(u => `<tr><td>${esc(u.username)}</td><td><select id="role_${u.id}" style="width:auto"><option value="seller" ${u.role === "seller" ? "selected" : ""}>販売員</option><option value="admin" ${u.role === "admin" ? "selected" : ""}>管理者</option></select></td><td>${u.active ? "使える" : "まだ使えない"}</td><td><button class="sub" onclick="doUserSave('${u.id}')">有効化して保存</button></td></tr>`).join("");
   $main.innerHTML = msg(m, ok) + `<div class="card"><h2>販売員の管理</h2>
   <p class="hint">販売員には自分で「新規登録」してもらい、ここで有効化してください。有効化するまで、その人は販売データを見られません。</p>
   <div class="scroll"><table><tr><th>ユーザー名</th><th>役割</th><th>状態</th><th></th></tr>${rows}</table></div></div>`;
@@ -833,12 +828,12 @@ function ticketBook(rnd, buyer, tickets) {
   const nums = mine.map(t => t.number);
   const lines = ["節電鯖 宝くじ", rnd.name, "", "買った人:", buyer, "", `番号（${nums.length}枚）:`]
     .concat(groupNums(nums))
-    .concat(["", `1枚 ${rnd.price} ダイヤ`, "当たったら この本を", "持ってきてね！", "", "なくさないでね"]);
+    .concat(["", `1枚 ${rnd.price} ダイヤ`, "当選した場合は", "この本を持参してください。", "", "なくさないでください"]);
   return {title: `宝くじ券 ${rnd.name}`.slice(0, 32), pages: paginateBook(lines)};
 }
 function winnersBook(rnd, tickets) {
   const winners = computeWinners(tickets, rnd);
-  const lines = ["節電鯖 宝くじ", rnd.name, "★ 当選発表 ★", "", "当選番号:"]
+  const lines = ["節電鯖 宝くじ", rnd.name, "当選発表 ", "", "当選番号:"]
     .concat(groupNums([...(rnd.winning_numbers || [])].sort((a, b) => a - b)))
     .concat(["", "当選した人:"]);
   const entries = Object.entries(winners).sort((a, b) => b[1].gross - a[1].gross);
@@ -850,7 +845,7 @@ function winnersBook(rnd, tickets) {
 async function copyBookText(text, btn) {
   try { await navigator.clipboard.writeText(text); }
   catch { const ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); }
-  if (btn) { const old = btn.textContent; btn.textContent = "✅ コピーした"; setTimeout(() => btn.textContent = old, 1500); }
+  if (btn) { const old = btn.textContent; btn.textContent = "コピーした"; setTimeout(() => btn.textContent = old, 1500); }
 }
 async function viewBook(m = "", ok = true) {
   const {rounds, rnd} = await pickRound();
@@ -859,12 +854,12 @@ async function viewBook(m = "", ok = true) {
   const buyers = [...new Set(tickets.filter(t => t.status === "valid").map(t => t.buyer))].sort();
   const kind = window._bookKind || "ticket";
   const buyer = window._bookBuyer && buyers.includes(window._bookBuyer) ? window._bookBuyer : (buyers[0] || "");
-  $main.innerHTML = msg(m, ok) + roundPicker(rounds, "#book") + `<div class="card"><h2>📖 Minecraftの本を作る</h2>
+  $main.innerHTML = msg(m, ok) + roundPicker(rounds, "#book") + `<div class="card"><h2>Minecraftの本を作る</h2>
   <p class="hint">ゲーム内の「本と羽ペン」に貼れる形で出します。1ページずつコピーして、本のページに貼ってください（1ページ = 本の1ページ分に収まる長さに区切ってあります）。本のタイトルも付けられます（32文字まで）。</p>
   <label class="f">作るもの</label>
   <div class="seg">
-    <button type="button" class="${kind === "ticket" ? "on" : ""}" onclick="window._bookKind='ticket';viewBook()">🎟 券の本（買った人へ渡す）</button>
-    <button type="button" class="${kind === "winners" ? "on" : ""}" onclick="window._bookKind='winners';viewBook()">🏆 当選発表の本</button>
+    <button type="button" class="${kind === "ticket" ? "on" : ""}" onclick="window._bookKind='ticket';viewBook()">券の本（買った人へ渡す）</button>
+    <button type="button" class="${kind === "winners" ? "on" : ""}" onclick="window._bookKind='winners';viewBook()">当選発表の本</button>
   </div>
   ${kind === "ticket" ? `<label class="f">誰の券ですか</label><select id="b_buyer" onchange="window._bookBuyer=this.value;viewBook()">${buyers.map(b => `<option ${b === buyer ? "selected" : ""}>${esc(b)}</option>`).join("")}</select>` : ""}
   <div id="book_out"></div></div>`;
@@ -881,14 +876,14 @@ function renderBookOut(out, book) {
   const all = book.pages.join("\n\n===== 次のページ =====\n\n");
   out.innerHTML = `<label class="f">本のタイトル（コピーして使えます）</label>
   <div style="display:flex;gap:8px"><input id="book_title" value="${esc(book.title)}" readonly><button class="sub" onclick="copyBookText(document.getElementById('book_title').value, this)">コピー</button></div>
-  ${book.pages.map((p, i) => `<label class="f">${i + 1} ページ目（${p.length}文字）</label><textarea class="bookpage" id="bp_${i}" readonly>${esc(p)}</textarea><button class="sub" onclick="copyBookText(document.getElementById('bp_${i}').value, this)">📋 このページをコピー</button>`).join("")}
-  <p style="margin-top:14px"><button class="sub" onclick='copyBookText(${JSON.stringify(all)}, this)'>📋 ぜんぶまとめてコピー（ページ区切り付き）</button></p>
+  ${book.pages.map((p, i) => `<label class="f">${i + 1} ページ目（${p.length}文字）</label><textarea class="bookpage" id="bp_${i}" readonly>${esc(p)}</textarea><button class="sub" onclick="copyBookText(document.getElementById('bp_${i}').value, this)">このページをコピー</button>`).join("")}
+  <p style="margin-top:14px"><button class="sub" onclick='copyBookText(${JSON.stringify(all)}, this)'>ぜんぶまとめてコピー（ページ区切り付き）</button></p>
   <p class="hint">渡すときは署名をして「本」にすると、コピー元の本として扱えます（昔のルールでも有効な券は署名済みの本でした）。</p>`;
 }
 
 // ---- 承認待ち提案（mod / Muse からの提案をウェブでも承認・実行） ----
-const PROP_STATUS_JP = {pending: "承認待ち", approved: "処理中", executed: "✅ 実行ずみ", rejected: "❌ 却下", failed: "⚠ 失敗"};
-const PROP_BY_JP = {"mod-local": "🎮 mod", "Muse": "🤖 おとうふ", "muse": "🤖 おとうふ", "manual": "✋ 手動"};
+const PROP_STATUS_JP = {pending: "承認待ち", approved: "処理中", executed: "実行ずみ", rejected: "却下", failed: "失敗"};
+const PROP_BY_JP = {"mod-local": "mod", "Muse": "おとうふ", "muse": "おとうふ", "manual": "手動"};
 const fmtTime = iso => iso ? String(iso).slice(0, 16).replace("T", " ") : "";
 async function viewProposals(m = "", ok = true) {
   const [pendRes, doneRes, inboxRes] = await Promise.all([
@@ -897,19 +892,19 @@ async function viewProposals(m = "", ok = true) {
     sb.from("agent_inbox").select("*").eq("seller", profile.username).order("created_at", {ascending: false}).limit(20)
   ]);
   const pend = pendRes.data || [], done = doneRes.data || [], inbox = inboxRes.data || [];
-  let h = msg(m, ok) + `<div class="card"><h2>🤝 承認待ちの提案</h2>
+  let h = msg(m, ok) + `<div class="card"><h2>承認待ちの提案</h2>
   <p class="hint">ゲームのチャットなどから来た注文の提案です。「承認して実行」を押したものだけが実際に登録されます。mod と同時に押しても、二重に登録されることはありません。</p>`;
   if (pendRes.error) h += msg(esc(pendRes.error.message), false);
   if (!pend.length) h += `<p class="hint">承認待ちはありません。</p>`;
   h += pend.map(p => `<div style="border:1px solid var(--line2);border-radius:12px;padding:12px;margin:10px 0">
     <div><b>${esc(p.summary)}</b></div>
     <div class="small" style="margin:4px 0 10px">作成: ${esc(PROP_BY_JP[p.created_by] || p.created_by)} ／ ${fmtTime(p.created_at)}</div>
-    <button onclick="doProposalApprove(${p.id})">✅ 承認して実行</button>
+    <button onclick="doProposalApprove(${p.id})">承認して実行</button>
     <button class="danger" onclick="doProposalReject(${p.id})">却下</button></div>`).join("");
   h += `</div><div class="card"><h3>処理ずみ（直近20件）</h3>`;
   if (!done.length) h += `<p class="hint">まだありません。</p>`;
   else h += `<div class="scroll"><table><tr><th>内容</th><th>状態</th><th>結果</th><th>時刻</th></tr>${done.map(p => `<tr><td>${esc(p.summary)}</td><td>${PROP_STATUS_JP[p.status] || esc(p.status)}</td><td>${esc(p.result)}</td><td>${fmtTime(p.decided_at || p.created_at)}</td></tr>`).join("")}</table></div>`;
-  h += `</div><div class="card"><h3>📥 受付箱（直近20件）</h3><p class="hint">mod が受け付けた発言です。ここは見るだけです。</p>`;
+  h += `</div><div class="card"><h3>受付箱（直近20件）</h3><p class="hint">mod が受け付けた発言です。ここは見るだけです。</p>`;
   if (!inbox.length) h += `<p class="hint">まだありません。</p>`;
   else h += `<div class="scroll"><table><tr><th>発言者</th><th>内容</th><th>状態</th><th>時刻</th></tr>${inbox.map(r => `<tr><td>${esc(r.speaker)}</td><td>${esc(r.raw)}</td><td>${esc(r.status)}</td><td>${fmtTime(r.created_at)}</td></tr>`).join("")}</table></div>`;
   h += `</div>`;
@@ -993,7 +988,7 @@ function showBookModal(book) {
   const ov = document.createElement("div");
   ov.id = "book_modal";
   ov.style.cssText = "position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.72);overflow:auto;padding:16px";
-  ov.innerHTML = `<div class="card" style="max-width:760px;margin:20px auto"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h3 style="margin:0">📖 券の本</h3><button class="sub" onclick="closeBookModal()">閉じる</button></div><div id="prop_book_out"></div></div>`;
+  ov.innerHTML = `<div class="card" style="max-width:760px;margin:20px auto"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h3 style="margin:0">券の本</h3><button class="sub" onclick="closeBookModal()">閉じる</button></div><div id="prop_book_out"></div></div>`;
   document.body.appendChild(ov);
   renderBookOut(document.getElementById("prop_book_out"), book);
 }
@@ -1164,51 +1159,51 @@ async function viewMM(m = "", ok = true) {
       mmStockTotal: machines.reduce((a, mc) => a + (mc.mm_stock || 0), 0),
       chainCount: chainRes ? chainRes.count : chained.length,
       headHash: chained.length ? chained[chained.length - 1].record_hash : "",
-      verifyText: chainRes && chainRes.ok ? `検証OK（チェーン ${chainRes.count} 件を全件再計算）` : `⚠ チェーン異常${chainRes ? `（#${chainRes.atSeq}: ${chainRes.why || "不一致"}）` : ""}`
+      verifyText: chainRes && chainRes.ok ? `検証OK（チェーン ${chainRes.count} 件を全件再計算）` : `チェーン異常${chainRes ? `（#${chainRes.atSeq}: ${chainRes.why || "不一致"}）` : ""}`
     };
   } catch (e) {
-    $main.innerHTML = msg(m, ok) + `<div class="card"><h2>💱 めうまねー (MM)</h2><p class="err">読み込めませんでした: ${esc(e.message)}</p><p class="hint">両替用のテーブル (mm_machines / mm_exchanges) がまだ用意されていない可能性があります。</p></div>`;
+    $main.innerHTML = msg(m, ok) + `<div class="card"><h2>めうまねー (MM)</h2><p class="err">読み込めませんでした: ${esc(e.message)}</p><p class="hint">両替用のテーブル (mm_machines / mm_exchanges) がまだ用意されていない可能性があります。</p></div>`;
     return;
   }
   const mName = id => esc((machines.find(x => x.id === id) || {}).name || `#${id}`);
   const confOpts = sel => `<option value="">（選んでください）</option>` + members.map(u => `<option value="${esc(u)}" ${u === sel ? "selected" : ""}>${esc(u)}</option>`).join("");
   const activeMachines = machines.filter(mc => mc.active);
   const pa = window._mmAudit || null;
-  let h = msg(m, ok) + `<h2>💱 めうまねー (MM)</h2>
+  let h = msg(m, ok) + `<h2>めうまねー (MM)</h2>
   <div class="card"><h3>全体のようす（レート 1D = 1MM）</h3><div class="kpi">
     <div class="box"><span>発行した累計</span><b>${s.issued} MM</b></div>
     <div class="box"><span>還元された累計</span><b>${s.redeemed} MM</b></div>
     <div class="box"><span>流通中の MM</span><b>${s.circulating} MM</b></div>
     <div class="box"><span>裏付けのダイヤ（全自販機）</span><b>${s.backing} D</b></div></div>
-    ${s.balanced ? `<p class="ok">✅ 流通中の MM と裏付けダイヤは一致しています</p>` : `<p class="err">⚠ 流通中の MM（${s.circulating}）と裏付けダイヤ（${s.backing}）が ${Math.abs(s.circulating - s.backing)} ずれています。在庫操作の記録を確認してください</p>`}
+    ${s.balanced ? `<p class="ok">流通中の MM と裏付けダイヤは一致しています</p>` : `<p class="err">流通中の MM（${s.circulating}）と裏付けダイヤ（${s.backing}）が ${Math.abs(s.circulating - s.backing)} ずれています。在庫操作の記録を確認してください</p>`}
     <p class="hint">宝くじ売上 (MM): <b>${mmTicketTotal} MM</b>（MM で買われたチケットの合計）</p></div>`;
-  if (pa) h += `<div class="card glow"><h3>🧮 棚卸しの確認</h3>
+  if (pa) h += `<div class="card glow"><h3>棚卸しの確認</h3>
     <p><b>${esc(pa.name)}</b> の棚卸しを記録します。</p>
     <p>台帳の在庫: ダイヤ ${pa.diaStock} D ／ MM ${pa.mmStock} MM<br>実物カウント: ダイヤ ${pa.actualDia} D ／ MM ${pa.actualMm} MM</p>
     <p>差分: ダイヤ <b>${fmtDelta(pa.diaDelta, "D")}</b> ／ MM <b>${fmtDelta(pa.mmDelta, "MM")}</b> をチェーンに記録し、在庫を実数に合わせます。</p>
     ${pa.witness ? `<p class="hint">立会人: ${esc(pa.witness)}</p>` : ""}${pa.confirmer ? `<p class="hint">確認者: ${esc(pa.confirmer)}</p>` : ""}
     <p><button type="button" onclick="doMMAuditExecute()">この内容で記録する</button> <button type="button" class="sub" onclick="window._mmAudit=null;viewMM()">やめる</button></p></div>`;
-  h += `<div class="card"><h3>🔗 台帳チェーン（改ざん検知）</h3>
-    ${chainRes && chainRes.ok ? `<p class="ok">✅ 検証OK（チェーン ${chainRes.count} 件${chainRes.count ? ` ／ 先端ハッシュ ${esc(chainRes.head.slice(0, 12))}…` : ""}）</p>` : `<p class="err">⚠ チェーンが壊れています${chainRes ? `（#${chainRes.atSeq}: ${esc(chainRes.why || "不一致")}）` : ""}。台帳が書き換えられた可能性があります</p>`}
+  h += `<div class="card"><h3>台帳チェーン（改ざん検知）</h3>
+    ${chainRes && chainRes.ok ? `<p class="ok">検証OK（チェーン ${chainRes.count} 件${chainRes.count ? ` ／ 先端ハッシュ ${esc(chainRes.head.slice(0, 12))}…` : ""}）</p>` : `<p class="err">チェーンが壊れています${chainRes ? `（#${chainRes.atSeq}: ${esc(chainRes.why || "不一致")}）` : ""}。台帳が書き換えられた可能性があります</p>`}
     ${preCount ? `<p class="hint">チェーン開始前の履歴が ${preCount} 件あります（ハッシュ検証の対象外です）</p>` : ""}
-    <p><button type="button" class="sub" onclick="exportMMLedger()">📥 台帳をエクスポート (JSON)</button></p>
+    <p><button type="button" class="sub" onclick="exportMMLedger()">台帳をエクスポート (JSON)</button></p>
     <p class="hint">このシステムが使えなくなっても、エクスポートした JSON と引き継ぎ用ツール（mm-tool.html）で台帳を検証して続けることができます</p></div>`;
-  h += `<div class="card"><h3>🌐 公開スナップショット</h3>
+  h += `<div class="card"><h3>公開スナップショット</h3>
     <p class="hint">流通量・裏付けダイヤ・台帳チェーンの先端ハッシュだけを、ログイン前の公開ページに表示できます（プレイヤー名や担当者名は出ません）。数字を確認したら更新してください。</p>
-    <p><button type="button" class="sub" onclick="doMMPublicUpdate()">🌐 公開スナップショットを更新</button>
-    <button type="button" class="sub" onclick="doMMCopyPublicText(this)">📋 公開用テキストをコピー</button></p>
+    <p><button type="button" class="sub" onclick="doMMPublicUpdate()">公開スナップショットを更新</button>
+    <button type="button" class="sub" onclick="doMMCopyPublicText(this)">公開用テキストをコピー</button></p>
     <p class="hint">公開用テキストは Wiki などに貼って残すためのものです。先端ハッシュを台帳の外に残すと、後から台帳を書き換えても検出できます。</p></div>`;
-  h += `<div class="card"><h3>🏦 プレイヤー残高への預かり / 払い戻し</h3>
+  h += `<div class="card"><h3>プレイヤー残高への預かり / 払い戻し</h3>
   <p class="hint">プレイヤーから現物の MM を受け取ったら「預かり」（残高が増えます）、残高ぶんの現物 MM を渡したら「払い戻し」（残高が減ります）。記録は送金台帳（公開）に残ります。</p>
   <label class="f">プレイヤーの Minecraft ID</label><input id="mm_op_player" maxlength="16" placeholder="例: Steve_123">
   <label class="f">金額 (MM)</label><input id="mm_op_amount" type="number" min="1" value="10">
   <label class="f">メモ（任意）</label><input id="mm_op_note" maxlength="200" placeholder="例: 対面で受取">
-  <p><button type="button" onclick="doMMOperatorTransfer('deposit')">🏦 預かり（現物を受け取る）</button>
-  <button type="button" class="sub" onclick="doMMOperatorTransfer('withdraw')">💸 払い戻し（現物を渡す）</button></p></div>`;
+  <p><button type="button" onclick="doMMOperatorTransfer('deposit')">預かり（現物を受け取る）</button>
+  <button type="button" class="sub" onclick="doMMOperatorTransfer('withdraw')">払い戻し（現物を渡す）</button></p></div>`;
   h += `<div class="card"><h3>両替する（レート 1D = 1MM）</h3>
   <label class="f">自販機</label><select id="mm_machine">${activeMachines.map(mc => `<option value="${mc.id}">${esc(mc.name)}（${esc(mc.location)}）… ダイヤ ${mc.dia_stock} / MM ${mc.mm_stock}</option>`).join("")}</select>
   <label class="f">方向</label>
-  <div class="seg"><button type="button" class="${mmDir === "issue" ? "on" : ""}" onclick="mmDir='issue';viewMM()">💎 ダイヤ → MM（発行）</button><button type="button" class="${mmDir === "redeem" ? "on" : ""}" onclick="mmDir='redeem';viewMM()">💱 MM → ダイヤ（還元）</button></div>
+  <div class="seg"><button type="button" class="${mmDir === "issue" ? "on" : ""}" onclick="mmDir='issue';viewMM()">ダイヤ → MM（発行）</button><button type="button" class="${mmDir === "redeem" ? "on" : ""}" onclick="mmDir='redeem';viewMM()">MM → ダイヤ（還元）</button></div>
   <label class="f">プレイヤーの Minecraft ID</label><input id="mm_player" maxlength="32" placeholder="例: Steve_123" value="${esc(window._mmPlayer || "")}" oninput="window._mmPlayer=this.value">
   <label class="f">個数（${mmDir === "issue" ? "払うダイヤ = もらう MM" : "払う MM = もらうダイヤ"}）</label><input id="mm_amount" type="number" min="1" value="10">
   <label class="f">確認者（大口のため確認者が必要：100以上のとき）</label><select id="mm_confirmer" onchange="window._mmConfirmer=this.value">${confOpts(window._mmConfirmer || "")}</select>
@@ -1225,7 +1220,7 @@ async function viewMM(m = "", ok = true) {
     <button type="button" class="sub" onclick="doMMStock(${mc.id},'mm_stock',1)">MM補充</button>
     <button type="button" class="sub" onclick="doMMStock(${mc.id},'mm_stock',-1)">MM回収</button></div>
     <div style="margin-top:12px;border-top:1px dashed var(--line2);padding-top:10px">
-    <div class="small" style="margin-bottom:6px">🧮 棚卸し（実物を数えて、台帳の在庫と合わせます。差分はチェーンに記録されます）</div>
+    <div class="small" style="margin-bottom:6px">棚卸し（実物を数えて、台帳の在庫と合わせます。差分はチェーンに記録されます）</div>
     <div class="stepper"><input id="aud_dia_${mc.id}" type="number" min="0" step="1" placeholder="ダイヤ実数" style="width:120px">
     <input id="aud_mm_${mc.id}" type="number" min="0" step="1" placeholder="MM実数" style="width:120px"></div>
     <label class="f">立会人（任意）</label><input id="aud_wit_${mc.id}" maxlength="32" placeholder="例: Alex_9">
@@ -1637,13 +1632,13 @@ async function doTradeCancel(id) {
 function viewMore() {
   const item = (hash, label, desc) => `<a href="#${hash}" style="display:block;color:var(--txt);text-decoration:none;padding:14px 4px;border-bottom:1px solid var(--line2)"><b>${label}</b><br><span class="small">${desc}</span></a>`;
   $main.innerHTML = `<div class="card"><h2>その他</h2>
-  ${item("numbers", "🔢 番号一覧", "番号ごとの買った人と配当")}
-  ${item("donations", "🎁 寄付", "寄付の受付と残り枚数")}
-  ${item("manage", "🛠 券の管理", "無効化と譲渡")}
-  ${item("mm", "💱 MM両替", "めうまねー (MM) の発行・還元と自販機の在庫")}
-  ${item("trade", "🤝 MM取引", "プレイヤー同士の MM 送金とアイテム取引の掲示板")}
-  ${item("public", "📊 みんなの実績", "公開ページを見る")}
-  ${profile.role === "admin" ? item("rounds", "⚙ 回・設定", "回の作成と状態変更") + item("users", "👥 販売員", "有効化と役割") + item("audit", "📝 記録", "操作ログ") : ""}
+  ${item("numbers", "番号一覧", "番号ごとの買った人と配当")}
+  ${item("donations", "寄付", "寄付の受付と残り枚数")}
+  ${item("manage", "券の管理", "無効化と譲渡")}
+  ${item("mm", "MM両替", "めうまねー (MM) の発行・還元と自販機の在庫")}
+  ${item("trade", "MM取引", "プレイヤー同士の MM 送金とアイテム取引の掲示板")}
+  ${item("public", "みんなの実績", "公開ページを見る")}
+  ${profile.role === "admin" ? item("rounds", "回・設定", "回の作成と状態変更") + item("users", "販売員", "有効化と役割") + item("audit", "記録", "操作ログ") : ""}
   </div>`;
 }
 
@@ -1655,7 +1650,7 @@ async function render() {
   renderNav(); renderTabbar();
   if (!session && !["public", "claim", "login", "register", "trade"].includes(hash)) { location.hash = "#public"; return; }
   if (session && profile && !profile.active && !["public", "claim", "trade"].includes(hash)) {
-    $main.innerHTML = `<div class="card"><h2>もう少し待ってね</h2><p>アカウント「${esc(profile.username)}」は、まだ管理者に有効化されていません。有効化されたら使えるようになります。</p></div>`;
+    $main.innerHTML = `<div class="card"><h2>有効化待ち</h2><p>アカウント「${esc(profile.username)}」は、まだ管理者に有効化されていません。</p></div>`;
     return;
   }
   switch (hash) {
