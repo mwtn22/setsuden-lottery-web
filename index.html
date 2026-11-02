@@ -168,6 +168,11 @@ async function fetchTickets(roundId, force = false) {
   const {data, error} = await sb.from("tickets").select("*").eq("round_id", roundId).order("id"); if (error) throw error;
   _cache.tickets[roundId] = {data, at: Date.now()}; return data;
 }
+function payBreakdown(tickets) { // 有効な券の実売上を通貨別に集計（pay_currency が無い行はダイヤ扱い）
+  let d = 0, mm = 0;
+  for (const t of tickets) { if (t.status !== "valid") continue; if (t.pay_currency === "MM") mm += t.amount_paid || 0; else d += t.amount_paid || 0; }
+  return {d, mm};
+}
 function statsFromTickets(tickets) {
   const counts = {};
   for (const t of tickets) if (t.status === "valid") counts[t.number] = (counts[t.number] || 0) + 1;
@@ -196,7 +201,7 @@ function renderNav() {
   const link = (hash, label) => `<a href="#${hash}" class="${h === hash ? "on" : ""}">${label}</a>`;
   if (!session) $nav.innerHTML = link("public", "📊 みんなの実績") + link("claim", "🕹 自販機で買った方") + link("login", "🔑 販売員ログイン");
   else if (!profile || !profile.active) $nav.innerHTML = `<span class="badge">${esc(profile?.username || "")}：有効化まち</span><button class="sub" onclick="logout()">ログアウト</button>`;
-  else $nav.innerHTML = link("app", "🏠 ホーム") + link("sell", "🎟 売る") + link("lots", "🕹 自販機") + link("donations", "🎁 寄付") + link("numbers", "🔢 番号一覧") + link("winners", "🏆 当選・引換") + link("manage", "🛠 券の管理") + link("book", "📖 本") + link("proposals", "🤝 提案")
+  else $nav.innerHTML = link("app", "🏠 ホーム") + link("sell", "🎟 売る") + link("lots", "🕹 自販機") + link("donations", "🎁 寄付") + link("numbers", "🔢 番号一覧") + link("winners", "🏆 当選・引換") + link("manage", "🛠 券の管理") + link("book", "📖 本") + link("proposals", "🤝 提案") + link("mm", "💱 MM")
     + (profile.role === "admin" ? link("rounds", "回・設定") + link("users", "販売員") + link("audit", "記録") : "")
     + `<span class="badge">${esc(profile.username)}</span><button class="sub" onclick="logout()">ログアウト</button>`;
 }
@@ -206,7 +211,7 @@ function renderTabbar() {
   const el = document.getElementById("tabbar");
   if (!session) el.innerHTML = tab("public", "📊", "実績") + tab("claim", "🕹", "自販機") + tab("login", "🔑", "ログイン");
   else if (!profile || !profile.active) el.innerHTML = tab("public", "📊", "実績") + tab("claim", "🕹", "自販機");
-  else el.innerHTML = tab("app", "🏠", "ホーム") + tab("sell", "🎟", "売る") + tab("lots", "🕹", "自販機") + tab("winners", "🏆", "当選") + tab("book", "📖", "本") + tab("proposals", "🤝", "提案") + tab("more", "☰", "その他");
+  else el.innerHTML = tab("app", "🏠", "ホーム") + tab("sell", "🎟", "売る") + tab("lots", "🕹", "自販機") + tab("winners", "🏆", "当選") + tab("book", "📖", "本") + tab("proposals", "🤝", "提案") + tab("mm", "💱", "MM") + tab("more", "☰", "その他");
 }
 async function logout() { await sb.auth.signOut(); session = null; profile = null; location.hash = "#public"; render(); }
 
@@ -337,6 +342,7 @@ async function viewApp(m = "", ok = true) {
     <div class="box"><span>状態</span><b>${STATUS_JP[rnd.status] || esc(rnd.status)}</b></div>
     <div class="box"><span>売れた枚数</span><b>${total} 枚</b></div>
     <div class="box"><span>集まった金額</span><b>${total * rnd.price} D</b></div>
+    <div class="box"><span>売上の内訳（実際に払われた分）</span><b>ダイヤ ${payBreakdown(tickets).d} / MM ${payBreakdown(tickets).mm}</b></div>
     <div class="box"><span>当選番号1つ分の配当のもと</span><b>${poolPerNumber(total, rnd.price, rnd.win_count, rnd.payout_rate)} D</b></div>
     <div class="box"><span>自販機ロット</span><b>在庫 ${stocked} / 登録ずみ ${claimed}</b></div>
     <div class="box"><span>寄付の合計</span><b>${donSum.db} DB</b></div>
@@ -350,6 +356,7 @@ async function viewApp(m = "", ok = true) {
 // ---- 売る（タップで番号えらび） ----
 let sellSel = {};        // {番号: 口数}
 let sellSource = "face"; // face/sponsor/donation
+let sellCurrency = "D";  // D / MM（1D = 1MM なので金額は同じ）
 let sellCounts = {};     // 既に売れた枚数（表示用）
 function sellTotal() { return Object.values(sellSel).reduce((a, b) => a + b, 0); }
 function sellSummary(rnd) {
@@ -377,6 +384,8 @@ async function viewSell(m = "", ok = true) {
   <label class="f">② 売り方</label>
   <div class="seg">${seg("face", "ふつうに売る")}${seg("sponsor", "スポンサー券")}${seg("donation", "寄付の引換で渡す")}</div>
   ${sellSource === "donation" ? `<label class="f">どの寄付の引換ですか</label><select id="s_donation"><option value="">選んでください</option>${avail.map(d => `<option value="${d.id}">${esc(d.donor)}（あと ${d.tickets_entitled - d.tickets_issued} 枚わたせる）</option>`).join("")}</select>` : ""}
+  <label class="f">支払う通貨（1D = 1MM）</label>
+  <div class="seg"><button type="button" class="${sellCurrency === "D" ? "on" : ""}" onclick="sellCurrency='D';viewSell()">💎 ダイヤ</button><button type="button" class="${sellCurrency === "MM" ? "on" : ""}" onclick="sellCurrency='MM';viewSell()">💱 MM（めうまねー）</button></div>
   <label class="f">③ 番号をタップで選ぶ</label>
   <div class="seg">
     <button type="button" id="mode_add" class="${sellMode === "add" ? "on" : ""}" onclick="setSellMode('add')">＋ ふやすモード</button>
@@ -408,7 +417,7 @@ function sellChipsHtml() {
 }
 function barSumHtml() {
   const total = sellTotal();
-  return total ? `合計 <b>${total} 枚</b>・目安 <b>${total * (window._sellPrice || 10)} D</b>` : "番号を選んでください";
+  return total ? `合計 <b>${total} 枚</b>・目安 <b>${total * (window._sellPrice || 10)} ${sellCurrency === "MM" ? "MM" : "D"}</b>` : "番号を選んでください";
 }
 function sellSummaryHtml() {
   const {list, total} = sellSummary(null);
@@ -468,13 +477,13 @@ async function doSell() {
     if (benefit || sellSource === "donation") amountEach = 0;
     else if (sellSource === "sponsor") amountEach = 45;
     else if (document.getElementById("s_staff").checked && rnd.staff_discount) amountEach = rnd.price - Math.floor(rnd.price / 10);
-    const rows = numbers.map(n => ({round_id: rnd.id, buyer, number: n, seller: profile.username, source: sellSource, donation_id: don?.id || null, is_donation_benefit: benefit, amount_paid: amountEach}));
+    const rows = numbers.map(n => ({round_id: rnd.id, buyer, number: n, seller: profile.username, source: sellSource, donation_id: don?.id || null, is_donation_benefit: benefit, amount_paid: amountEach, pay_currency: sellCurrency}));
     const {error} = await sb.from("tickets").insert(rows); if (error) throw error;
     if (don) { const {error: e2} = await sb.from("donations").update({tickets_issued: don.tickets_issued + numbers.length}).eq("id", don.id); if (e2) throw e2; }
-    await audit("sell", `round=${rnd.id} buyer=${buyer} numbers=${numbers} source=${sellSource}`);
+    await audit("sell", `round=${rnd.id} buyer=${buyer} numbers=${numbers} source=${sellSource} currency=${sellCurrency}`);
     const doneTotal = numbers.length, doneList = numbers.join(", ");
     sellSel = {}; window._sellBuyer = "";
-    viewSell(`${esc(buyer)} さんに ${doneTotal} 枚売りました（番号: ${doneList}／金額の目安 ${amountEach * doneTotal}D）<br><a href="#book" onclick="window._bookKind='ticket';window._bookBuyer='${esc(buyer)}'">📖 この人の「券の本」用テキストを作る</a>`);
+    viewSell(`${esc(buyer)} さんに ${doneTotal} 枚売りました（番号: ${doneList}／金額の目安 ${amountEach * doneTotal}${sellCurrency === "MM" ? "MM" : "D"}）<br><a href="#book" onclick="window._bookKind='ticket';window._bookBuyer='${esc(buyer)}'">📖 この人の「券の本」用テキストを作る</a>`);
   } catch (e) { viewSell(esc(e.message), false); }
 }
 
@@ -610,13 +619,13 @@ async function viewWinners(m = "", ok = true) {
   const grossSum = Object.values(winners).reduce((a, w) => a + w.gross, 0);
   const rows = Object.entries(winners).sort((a, b) => b[1].gross - a[1].gross).map(([buyer, w]) => {
     const fee = redemptionFee(w.gross, w.isSponsor, todayISO(), rnd);
-    const feeTxt = fee === null ? "期限を過ぎています（要相談）" : (fee === 0 ? `手数料なし → ${w.gross}D 渡す` : `手数料 ${fee}D → ${w.gross - fee}D 渡す`);
+    const feeTxt = fee === null ? "期限を過ぎています（要相談）" : (fee === 0 ? `手数料なし → ${w.gross}D（=${w.gross}MM）渡す` : `手数料 ${fee}D → ${w.gross - fee}D（=${w.gross - fee}MM）渡す`);
     const state = redeemedBuyers.has(buyer) ? "✅ 渡した" : `<button onclick="doRedeem('${esc(buyer)}')">渡したことにする</button>`;
-    return `<tr><td>${esc(buyer)}</td><td>${w.winTickets.join(", ")}</td><td>${w.gross}D</td><td>${w.isSponsor ? "寄付・スポンサー" : "ふつう"}</td><td>${feeTxt}</td><td>${state}</td></tr>`;
+    return `<tr><td>${esc(buyer)}</td><td>${w.winTickets.join(", ")}</td><td>${w.gross}D（=${w.gross}MM）</td><td>${w.isSponsor ? "寄付・スポンサー" : "ふつう"}</td><td>${feeTxt}</td><td>${state}</td></tr>`;
   }).join("");
   h += `<div class="card"><h3>当選した人</h3><p class="hint">渡せる期間: 手数料なしは ${esc(rnd.redeem_free_until || "未設定")} まで ／ 手数料1割で ${esc(rnd.redeem_ext_until || "未設定")} まで ／ 寄付・スポンサーは ${esc(rnd.sponsor_redeem_until || "未設定")} まで手数料なし。渡すときは券を見せてもらってね。</p><div class="scroll"><table><tr><th>当選した人</th><th>当たった番号</th><th>配当</th><th>区分</th><th>今日渡す場合</th><th>引換</th></tr>${rows}</table></div></div>`;
-  h += `<div class="card"><h3>お金の内訳</h3><p>配当のもと（集まった金額 × ${rnd.payout_rate}%）: ${fund}D ／ 当選した人へ合計: ${grossSum}D ／ <b>余った ${fund - grossSum}D は Gate07 へ寄付</b></p><button class="sub" onclick="window._bookKind='winners';location.hash='#book'">📖 当選発表の本を作る</button></div>`;
-  if (reds && reds.length) h += `<div class="card"><h3>渡した記録</h3><div class="scroll"><table><tr><th>当選した人</th><th>配当</th><th>手数料</th><th>渡した額</th><th>担当</th></tr>${reds.map(r => `<tr><td>${esc(r.buyer)}</td><td>${r.gross}D</td><td>${r.fee}D</td><td>${r.net}D</td><td>${esc(r.redeemed_by)}</td></tr>`).join("")}</table></div></div>`;
+  h += `<div class="card"><h3>お金の内訳</h3><p>配当のもと（集まった金額 × ${rnd.payout_rate}%）: ${fund}D（=${fund}MM）／ 当選した人へ合計: ${grossSum}D（=${grossSum}MM）／ <b>余った ${fund - grossSum}D（=${fund - grossSum}MM）は Gate07 へ寄付</b></p><button class="sub" onclick="window._bookKind='winners';location.hash='#book'">📖 当選発表の本を作る</button></div>`;
+  if (reds && reds.length) h += `<div class="card"><h3>渡した記録</h3><div class="scroll"><table><tr><th>当選した人</th><th>配当</th><th>手数料</th><th>渡した額</th><th>担当</th></tr>${reds.map(r => `<tr><td>${esc(r.buyer)}</td><td>${r.gross}D（=${r.gross}MM）</td><td>${r.fee}D</td><td>${r.net}D（=${r.net}MM）</td><td>${esc(r.redeemed_by)}</td></tr>`).join("")}</table></div></div>`;
   $main.innerHTML = h;
 }
 async function doDraw() {
@@ -660,7 +669,7 @@ async function doRedeem(buyer) {
     const {error} = await sb.from("redemptions").insert({round_id: rnd.id, buyer, gross: w.gross, fee, net: w.gross - fee, redeemed_by: profile.username, note});
     if (error) throw error;
     await audit("redeem", `buyer=${buyer} gross=${w.gross} fee=${fee} ${note}`);
-    viewWinners(`${esc(buyer)} さんへ ${w.gross - fee}D 渡したことにしました（手数料 ${fee}D）`);
+    viewWinners(`${esc(buyer)} さんへ ${w.gross - fee}D（=${w.gross - fee}MM）渡したことにしました（手数料 ${fee}D）`);
   } catch (e) { viewWinners(esc(e.message), false); }
 }
 
@@ -1007,6 +1016,147 @@ async function doProposalApprove(id) {
   }
 }
 
+// ---- めうまねー (MM) 両替：自販機方式。レートは 1D = 1MM 固定 ----
+const MM_KIND_JP = {issue: "発行（D→MM）", redeem: "還元（MM→D）", stock: "在庫操作"};
+let mmDir = "issue"; // issue: ダイヤ→MM / redeem: MM→ダイヤ
+let _mmCache = {machines: null, at: 0};
+function invalidateMM() { _mmCache.machines = null; }
+async function fetchMachines(force = false) {
+  if (!force && _mmCache.machines && Date.now() - _mmCache.at < CACHE_MS) return _mmCache.machines;
+  const {data, error} = await sb.from("mm_machines").select("*").order("id");
+  if (error) throw error;
+  _mmCache = {machines: data, at: Date.now()};
+  return data;
+}
+// 集計（単体テスト対象）: exchanges は kind/mm_delta、machines は dia_stock を持つ行の配列
+function mmSummary(exchanges, machines) {
+  let issued = 0, redeemed = 0;
+  for (const e of exchanges) {
+    if (e.kind === "issue") issued += -(e.mm_delta || 0);       // 発行 = 在庫から出たMM
+    else if (e.kind === "redeem") redeemed += (e.mm_delta || 0); // 還元 = 在庫に戻ったMM
+  }
+  const circulating = issued - redeemed;
+  const backing = (machines || []).reduce((a, mc) => a + (mc.dia_stock || 0), 0);
+  return {issued, redeemed, circulating, backing, balanced: circulating === backing};
+}
+function mmExchangeCheck(kind, machine, n) { // 両替の事前チェック。エラー文字列 or null
+  if (!machine) return "自販機を選んでください";
+  if (!machine.active) return "この自販機は停止中です";
+  if (!Number.isInteger(n) || n < 1) return "個数は1以上の整数で入れてください";
+  if (kind === "issue" && machine.mm_stock < n) return `MM在庫が足りません（いま ${machine.mm_stock} MM）`;
+  if (kind === "redeem" && machine.dia_stock < n) return `ダイヤ在庫が足りません（いま ${machine.dia_stock} D）`;
+  return null;
+}
+function mmStockCheck(machine, field, delta) { // 在庫操作でマイナスにならないか
+  if (!machine) return "自販機が見つかりません";
+  return (machine[field] || 0) + delta < 0 ? "在庫がマイナスになってしまいます" : null;
+}
+const fmtDelta = (v, unit) => v > 0 ? `+${v}${unit}` : v < 0 ? `${v}${unit}` : `±0${unit}`;
+async function viewMM(m = "", ok = true) {
+  let machines = [], hist = [], mmTicketTotal = 0, s = mmSummary([], []);
+  try {
+    machines = await fetchMachines();
+    const [allRes, histRes, tkRes] = await Promise.all([
+      sb.from("mm_exchanges").select("kind,mm_delta"),
+      sb.from("mm_exchanges").select("*").order("created_at", {ascending: false}).limit(30),
+      sb.from("tickets").select("amount_paid").eq("pay_currency", "MM").eq("status", "valid")
+    ]);
+    if (allRes.error) throw allRes.error;
+    s = mmSummary(allRes.data || [], machines);
+    hist = histRes.data || [];
+    mmTicketTotal = (tkRes.data || []).reduce((a, t) => a + (t.amount_paid || 0), 0);
+  } catch (e) {
+    $main.innerHTML = msg(m, ok) + `<div class="card"><h2>💱 めうまねー (MM)</h2><p class="err">読み込めませんでした: ${esc(e.message)}</p><p class="hint">両替用のテーブル (mm_machines / mm_exchanges) がまだ用意されていない可能性があります。</p></div>`;
+    return;
+  }
+  const mName = id => esc((machines.find(x => x.id === id) || {}).name || `#${id}`);
+  const activeMachines = machines.filter(mc => mc.active);
+  let h = msg(m, ok) + `<h2>💱 めうまねー (MM)</h2>
+  <div class="card"><h3>全体のようす（レート 1D = 1MM）</h3><div class="kpi">
+    <div class="box"><span>発行した累計</span><b>${s.issued} MM</b></div>
+    <div class="box"><span>還元された累計</span><b>${s.redeemed} MM</b></div>
+    <div class="box"><span>流通中の MM</span><b>${s.circulating} MM</b></div>
+    <div class="box"><span>裏付けのダイヤ（全自販機）</span><b>${s.backing} D</b></div></div>
+    ${s.balanced ? `<p class="ok">✅ 流通中の MM と裏付けダイヤは一致しています</p>` : `<p class="err">⚠ 流通中の MM（${s.circulating}）と裏付けダイヤ（${s.backing}）が ${Math.abs(s.circulating - s.backing)} ずれています。在庫操作の記録を確認してください</p>`}
+    <p class="hint">宝くじ売上 (MM): <b>${mmTicketTotal} MM</b>（MM で買われたチケットの合計）</p></div>`;
+  h += `<div class="card"><h3>両替する（レート 1D = 1MM）</h3>
+  <label class="f">自販機</label><select id="mm_machine">${activeMachines.map(mc => `<option value="${mc.id}">${esc(mc.name)}（${esc(mc.location)}）… ダイヤ ${mc.dia_stock} / MM ${mc.mm_stock}</option>`).join("")}</select>
+  <label class="f">方向</label>
+  <div class="seg"><button type="button" class="${mmDir === "issue" ? "on" : ""}" onclick="mmDir='issue';viewMM()">💎 ダイヤ → MM（発行）</button><button type="button" class="${mmDir === "redeem" ? "on" : ""}" onclick="mmDir='redeem';viewMM()">💱 MM → ダイヤ（還元）</button></div>
+  <label class="f">プレイヤーの Minecraft ID</label><input id="mm_player" maxlength="32" placeholder="例: Steve_123" value="${esc(window._mmPlayer || "")}" oninput="window._mmPlayer=this.value">
+  <label class="f">個数（${mmDir === "issue" ? "払うダイヤ = もらう MM" : "払う MM = もらうダイヤ"}）</label><input id="mm_amount" type="number" min="1" value="10">
+  ${activeMachines.length ? `<button class="big" onclick="doMMExchange()">両替する</button>` : `<p class="hint">使える自販機がありません。下の一覧で自販機を用意してください。</p>`}</div>`;
+  h += `<div class="card"><h3>自販機の一覧と在庫操作</h3>`;
+  if (!machines.length) h += `<p class="hint">まだ自販機がありません。${profile.role === "admin" ? "下のフォームから追加してください。" : "管理者に追加してもらってください。"}</p>`;
+  else h += machines.map(mc => `<div style="border:1px solid var(--line2);border-radius:12px;padding:12px;margin:10px 0">
+    <div><b>${esc(mc.name)}</b> <span class="small">${esc(mc.location)} ／ ${mc.active ? "稼働中" : "停止中"}</span></div>
+    <div style="margin:6px 0">ダイヤ在庫 <b>${mc.dia_stock}</b> D ／ MM在庫 <b>${mc.mm_stock}</b> MM</div>
+    <div class="stepper"><input id="stk_n_${mc.id}" type="number" min="1" value="10" style="width:90px">
+    <button type="button" class="sub" onclick="doMMStock(${mc.id},'dia_stock',1)">ダイヤ補充</button>
+    <button type="button" class="sub" onclick="doMMStock(${mc.id},'dia_stock',-1)">ダイヤ回収</button>
+    <button type="button" class="sub" onclick="doMMStock(${mc.id},'mm_stock',1)">MM補充</button>
+    <button type="button" class="sub" onclick="doMMStock(${mc.id},'mm_stock',-1)">MM回収</button></div></div>`).join("");
+  if (profile.role === "admin") h += `<h3 style="margin-top:18px">自販機を追加（管理者）</h3>
+  <label class="f">名前</label><input id="mm_new_name" placeholder="例: 両替機1号">
+  <label class="f">場所</label><input id="mm_new_loc" placeholder="例: スポーン前、銀行の横 など">
+  <button class="sub" onclick="doMMAddMachine()">追加する</button>`;
+  h += `</div>`;
+  h += `<div class="card"><h3>両替の記録（直近30件）</h3>`;
+  if (!hist.length) h += `<p class="hint">まだありません。</p>`;
+  else h += `<div class="scroll"><table><tr><th>時刻</th><th>自販機</th><th>種別</th><th>プレイヤー</th><th>在庫の増減</th><th>担当</th><th>メモ</th></tr>${hist.map(e => `<tr><td>${fmtTime(e.created_at)}</td><td>${mName(e.machine_id)}</td><td>${MM_KIND_JP[e.kind] || esc(e.kind)}</td><td>${esc(e.player)}</td><td>ダイヤ ${fmtDelta(e.dia_delta, "D")} / MM ${fmtDelta(e.mm_delta, "MM")}</td><td>${esc(e.seller)}</td><td>${esc(e.note)}</td></tr>`).join("")}</table></div>`;
+  h += `</div>`;
+  $main.innerHTML = h;
+}
+async function applyMMExchange(mc, kind, player, diaDelta, mmDelta, note) { // 記録して在庫を更新する共通処理
+  const {error} = await sb.from("mm_exchanges").insert({machine_id: mc.id, seller: profile.username, kind, player: player || null, dia_delta: diaDelta, mm_delta: mmDelta, note});
+  if (error) throw error;
+  const {error: e2} = await sb.from("mm_machines").update({dia_stock: (mc.dia_stock || 0) + diaDelta, mm_stock: (mc.mm_stock || 0) + mmDelta}).eq("id", mc.id);
+  if (e2) throw e2;
+  invalidateMM();
+}
+async function doMMExchange() {
+  try {
+    const mid = parseInt(document.getElementById("mm_machine").value, 10);
+    const machines = await fetchMachines(true);
+    const mc = machines.find(x => x.id === mid);
+    const player = (window._mmPlayer || document.getElementById("mm_player").value).trim();
+    if (!/^[A-Za-z0-9_]{3,32}$/.test(player)) throw new Error("プレイヤーの Minecraft ID を入れてください（半角の英数字と _ ）");
+    const n = parseInt(document.getElementById("mm_amount").value, 10);
+    const err = mmExchangeCheck(mmDir, mc, n); if (err) throw new Error(err);
+    const diaDelta = mmDir === "issue" ? n : -n;
+    const mmDelta = mmDir === "issue" ? -n : n;
+    await applyMMExchange(mc, mmDir, player, diaDelta, mmDelta, mmDir === "issue" ? "両替: ダイヤ→MM" : "両替: MM→ダイヤ");
+    await audit("mm_exchange", `machine=${mc.id} kind=${mmDir} player=${player} n=${n}`);
+    viewMM(mmDir === "issue" ? `${esc(player)} さん: ${n}D → ${n}MM を渡しました（${esc(mc.name)}）` : `${esc(player)} さん: ${n}MM → ${n}D を渡しました（${esc(mc.name)}）`);
+  } catch (e) { viewMM(esc(e.message), false); }
+}
+async function doMMStock(id, field, sign) {
+  try {
+    const n = parseInt(document.getElementById("stk_n_" + id)?.value, 10);
+    if (!Number.isInteger(n) || n < 1) throw new Error("個数は1以上の整数で入れてください");
+    const machines = await fetchMachines(true);
+    const mc = machines.find(x => x.id === id);
+    const delta = sign * n;
+    const err = mmStockCheck(mc, field, delta); if (err) throw new Error(err);
+    const label = (field === "dia_stock" ? "ダイヤ" : "MM") + (sign > 0 ? "補充" : "回収");
+    await applyMMExchange(mc, "stock", null, field === "dia_stock" ? delta : 0, field === "mm_stock" ? delta : 0, `在庫操作: ${label}`);
+    await audit("mm_stock", `machine=${id} ${label} ${n}`);
+    viewMM(`${esc(mc.name)}: ${label} ${n} しました`);
+  } catch (e) { viewMM(esc(e.message), false); }
+}
+async function doMMAddMachine() {
+  try {
+    const name = document.getElementById("mm_new_name").value.trim();
+    const location = document.getElementById("mm_new_loc").value.trim();
+    if (!name) throw new Error("自販機の名前を入れてください");
+    const {error} = await sb.from("mm_machines").insert({name, location, dia_stock: 0, mm_stock: 0, active: true});
+    if (error) throw error;
+    invalidateMM();
+    await audit("mm_machine_add", `name=${name} location=${location}`);
+    viewMM(`自販機「${esc(name)}」を追加しました。在庫操作からダイヤと MM を入れてください`);
+  } catch (e) { viewMM(esc(e.message), false); }
+}
+
 // ---- その他メニュー（スマホ用） ----
 function viewMore() {
   const item = (hash, label, desc) => `<a href="#${hash}" style="display:block;color:var(--txt);text-decoration:none;padding:14px 4px;border-bottom:1px solid var(--line2)"><b>${label}</b><br><span class="small">${desc}</span></a>`;
@@ -1014,6 +1164,7 @@ function viewMore() {
   ${item("numbers", "🔢 番号一覧", "番号ごとの買った人と配当")}
   ${item("donations", "🎁 寄付", "寄付の受付と残り枚数")}
   ${item("manage", "🛠 券の管理", "無効化と譲渡")}
+  ${item("mm", "💱 MM両替", "めうまねー (MM) の発行・還元と自販機の在庫")}
   ${item("public", "📊 みんなの実績", "公開ページを見る")}
   ${profile.role === "admin" ? item("rounds", "⚙ 回・設定", "回の作成と状態変更") + item("users", "👥 販売員", "有効化と役割") + item("audit", "📝 記録", "操作ログ") : ""}
   </div>`;
@@ -1042,6 +1193,7 @@ async function render() {
     case "manage": return viewManage();
     case "book": return viewBook();
     case "proposals": return viewProposals();
+    case "mm": return viewMM();
     case "more": return viewMore();
     case "rounds": return profile?.role === "admin" ? viewRounds() : viewApp();
     case "users": return profile?.role === "admin" ? viewUsers() : viewApp();
