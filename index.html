@@ -1052,17 +1052,64 @@ function mmStockCheck(machine, field, delta) { // 在庫操作でマイナスに
   return (machine[field] || 0) + delta < 0 ? "在庫がマイナスになってしまいます" : null;
 }
 const fmtDelta = (v, unit) => v > 0 ? `+${v}${unit}` : v < 0 ? `${v}${unit}` : `±0${unit}`;
+// ---- MM台帳ハッシュチェーン (MMCHAINv1) ----
+// record_hash = SHA-256("MMCHAINv1|{chain_seq}|{prev_hash}|{machine_id}|{kind}|{player}|{dia_delta}|{mm_delta}|{seller}|{note}")
+// 先頭行の prev_hash は "GENESIS-MM"。mm_exchanges への挿入は必ず insertMMExchange 経由にすること（オフライン引き継ぎツール mm-tool.html と同一仕様）。
+const MM_GENESIS = "GENESIS-MM";
+function mmChainString(r) {
+  return ["MMCHAINv1", r.chain_seq, r.prev_hash ?? "", String(r.machine_id ?? ""), r.kind ?? "", r.player ?? "", r.dia_delta, r.mm_delta, r.seller ?? "", r.note ?? ""].join("|");
+}
+async function sha256Hex(text) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+async function verifyMMChain(rows) { // rows は chain_seq 昇順。{ok:true,count,head} か {ok:false,atSeq,why}
+  let prev = MM_GENESIS;
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    if (r.chain_seq !== i + 1) return {ok: false, atSeq: r.chain_seq, why: "連番が飛んでいます"};
+    if (r.prev_hash !== prev) return {ok: false, atSeq: r.chain_seq, why: "前のレコードとつながっていません"};
+    if (await sha256Hex(mmChainString(r)) !== r.record_hash) return {ok: false, atSeq: r.chain_seq, why: "ハッシュが合いません（書き換えられた可能性）"};
+    prev = r.record_hash;
+  }
+  return {ok: true, count: rows.length, head: rows.length ? rows[rows.length - 1].record_hash : ""};
+}
+async function fetchMMChain() { // キャッシュを使わず全件取得: {chained: chain_seq 昇順, prechain: チェーン開始前の行}
+  const chained = [], PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const {data, error} = await sb.from("mm_exchanges").select("*").not("chain_seq", "is", null).order("chain_seq", {ascending: true}).range(from, from + PAGE - 1);
+    if (error) throw error;
+    chained.push(...data);
+    if (data.length < PAGE) break;
+  }
+  const {data: pre, error: e2} = await sb.from("mm_exchanges").select("*").is("chain_seq", null).order("id", {ascending: true});
+  if (e2) throw e2;
+  return {chained, prechain: pre || []};
+}
+async function insertMMExchange(mc, kind, player, diaDelta, mmDelta, note) { // チェーンを延ばして1件挿入する唯一の入口
+  const base = {machine_id: mc.id, seller: profile.username, kind, player: player || null, dia_delta: diaDelta, mm_delta: mmDelta, note: note ?? ""};
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const {data: latest, error: e1} = await sb.from("mm_exchanges").select("chain_seq, record_hash").not("chain_seq", "is", null).order("chain_seq", {ascending: false}).limit(1);
+    if (e1) throw e1;
+    const rec = {...base, chain_seq: latest && latest.length ? latest[0].chain_seq + 1 : 1, prev_hash: latest && latest.length ? latest[0].record_hash : MM_GENESIS, record_hash: ""};
+    rec.record_hash = await sha256Hex(mmChainString(rec));
+    const {error} = await sb.from("mm_exchanges").insert(rec);
+    if (!error) return rec;
+    if (!(error.code === "23505" || /duplicate|unique/i.test(error.message || "")) || attempt === 1) throw error; // 連番が競合したら再取得して1回だけ再試行
+  }
+}
 async function viewMM(m = "", ok = true) {
-  let machines = [], hist = [], mmTicketTotal = 0, s = mmSummary([], []);
+  let machines = [], hist = [], mmTicketTotal = 0, s = mmSummary([], []), chainRes = null, preCount = 0;
   try {
     machines = await fetchMachines();
-    const [allRes, histRes, tkRes] = await Promise.all([
-      sb.from("mm_exchanges").select("kind,mm_delta"),
+    const [chainData, histRes, tkRes] = await Promise.all([
+      fetchMMChain(),
       sb.from("mm_exchanges").select("*").order("created_at", {ascending: false}).limit(30),
       sb.from("tickets").select("amount_paid").eq("pay_currency", "MM").eq("status", "valid")
     ]);
-    if (allRes.error) throw allRes.error;
-    s = mmSummary(allRes.data || [], machines);
+    s = mmSummary([...chainData.prechain, ...chainData.chained], machines);
+    preCount = chainData.prechain.length;
+    chainRes = await verifyMMChain(chainData.chained);
     hist = histRes.data || [];
     mmTicketTotal = (tkRes.data || []).reduce((a, t) => a + (t.amount_paid || 0), 0);
   } catch (e) {
@@ -1079,6 +1126,11 @@ async function viewMM(m = "", ok = true) {
     <div class="box"><span>裏付けのダイヤ（全自販機）</span><b>${s.backing} D</b></div></div>
     ${s.balanced ? `<p class="ok">✅ 流通中の MM と裏付けダイヤは一致しています</p>` : `<p class="err">⚠ 流通中の MM（${s.circulating}）と裏付けダイヤ（${s.backing}）が ${Math.abs(s.circulating - s.backing)} ずれています。在庫操作の記録を確認してください</p>`}
     <p class="hint">宝くじ売上 (MM): <b>${mmTicketTotal} MM</b>（MM で買われたチケットの合計）</p></div>`;
+  h += `<div class="card"><h3>🔗 台帳チェーン（改ざん検知）</h3>
+    ${chainRes && chainRes.ok ? `<p class="ok">✅ 検証OK（チェーン ${chainRes.count} 件${chainRes.count ? ` ／ 先端ハッシュ ${esc(chainRes.head.slice(0, 12))}…` : ""}）</p>` : `<p class="err">⚠ チェーンが壊れています${chainRes ? `（#${chainRes.atSeq}: ${esc(chainRes.why || "不一致")}）` : ""}。台帳が書き換えられた可能性があります</p>`}
+    ${preCount ? `<p class="hint">チェーン開始前の履歴が ${preCount} 件あります（ハッシュ検証の対象外です）</p>` : ""}
+    <p><button type="button" class="sub" onclick="exportMMLedger()">📥 台帳をエクスポート (JSON)</button></p>
+    <p class="hint">このシステムが使えなくなっても、エクスポートした JSON と引き継ぎ用ツール（mm-tool.html）で台帳を検証して続けることができます</p></div>`;
   h += `<div class="card"><h3>両替する（レート 1D = 1MM）</h3>
   <label class="f">自販機</label><select id="mm_machine">${activeMachines.map(mc => `<option value="${mc.id}">${esc(mc.name)}（${esc(mc.location)}）… ダイヤ ${mc.dia_stock} / MM ${mc.mm_stock}</option>`).join("")}</select>
   <label class="f">方向</label>
@@ -1108,11 +1160,31 @@ async function viewMM(m = "", ok = true) {
   $main.innerHTML = h;
 }
 async function applyMMExchange(mc, kind, player, diaDelta, mmDelta, note) { // 記録して在庫を更新する共通処理
-  const {error} = await sb.from("mm_exchanges").insert({machine_id: mc.id, seller: profile.username, kind, player: player || null, dia_delta: diaDelta, mm_delta: mmDelta, note});
-  if (error) throw error;
+  await insertMMExchange(mc, kind, player, diaDelta, mmDelta, note);
   const {error: e2} = await sb.from("mm_machines").update({dia_stock: (mc.dia_stock || 0) + diaDelta, mm_stock: (mc.mm_stock || 0) + mmDelta}).eq("id", mc.id);
   if (e2) throw e2;
   invalidateMM();
+}
+async function exportMMLedger() { // 台帳全体を JSON でダウンロード（引き継ぎ用）
+  try {
+    const machines = await fetchMachines(true);
+    const {chained, prechain} = await fetchMMChain();
+    const payload = {
+      format: "mm-ledger-export-v1",
+      exported_at: new Date().toISOString(),
+      head_hash: chained.length ? chained[chained.length - 1].record_hash : "",
+      machines,
+      exchanges: [...chained, ...prechain]
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {type: "application/json"});
+    const d = new Date();
+    const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `mm-ledger-${ymd}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  } catch (e) { alert("エクスポートできませんでした: " + e.message); }
 }
 async function doMMExchange() {
   try {

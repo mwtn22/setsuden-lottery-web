@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>めうまねー (MM) 台帳 引き継ぎツール</title>
+<style>
+:root{
+  --bg:#070b10; --panel:rgba(19,28,38,.9); --panel2:rgba(13,20,29,.95);
+  --line:rgba(110,231,238,.16); --line2:rgba(255,255,255,.08);
+  --txt:#eef6f7; --sub:#9db4ba; --dia:#3ee6ee; --gold:#ffd94d;
+  --acc:#17c964; --danger:#ff5a52; --radius:16px;
+}
+*{box-sizing:border-box}
+body{font-family:system-ui,'Hiragino Sans','Noto Sans JP',sans-serif;margin:0;color:var(--txt);
+  background:linear-gradient(180deg,#070b10,#05080c 60%,#070b10);min-height:100vh}
+main{max-width:960px;margin:0 auto;padding:18px 16px 60px}
+h1{font-size:22px;font-weight:900;margin:10px 0 4px}
+h2{font-size:17px;margin:6px 0 8px}
+.card{background:var(--panel);border:1px solid var(--line2);border-radius:var(--radius);padding:18px;margin:14px 0}
+.hint{color:var(--sub);font-size:13px;margin:4px 0 10px;line-height:1.6}
+.warn{background:rgba(120,90,10,.35);border:1px solid rgba(255,217,77,.5);padding:12px 14px;border-radius:12px;margin:10px 0;line-height:1.7}
+.err{background:rgba(120,25,25,.85);border:1px solid rgba(255,90,82,.5);padding:12px 14px;border-radius:12px;margin:10px 0}
+.ok{background:rgba(16,80,45,.85);border:1px solid rgba(23,201,100,.5);padding:12px 14px;border-radius:12px;margin:10px 0}
+label.f{display:block;font-size:13px;color:var(--sub);margin:12px 0 5px;font-weight:600}
+input,select{width:100%;background:var(--panel2);color:var(--txt);border:1px solid rgba(255,255,255,.14);border-radius:12px;padding:11px;font-size:16px}
+button{background:linear-gradient(135deg,#22d573,#0ea968);color:#fff;border:0;border-radius:12px;padding:11px 18px;cursor:pointer;font-size:15px;font-weight:800}
+button.sub{background:rgba(255,255,255,.07);border:1px solid var(--line2);font-weight:700}
+button:disabled{opacity:.45;cursor:default}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{border-bottom:1px solid var(--line2);padding:8px;text-align:left}
+th{color:var(--sub);font-weight:600}
+.scroll{overflow-x:auto}
+.kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.kpi .box{background:rgba(255,255,255,.04);border:1px solid var(--line2);border-radius:14px;padding:13px}
+.kpi .box span{color:var(--sub);font-size:12px;display:block;margin-bottom:3px}
+.kpi .box b{font-size:22px;font-weight:900}
+#drop{border:2px dashed rgba(110,231,238,.4);border-radius:var(--radius);padding:26px;text-align:center;color:var(--sub);cursor:pointer}
+#drop.over{border-color:var(--dia);color:var(--txt);background:rgba(62,230,238,.08)}
+.mono{font-family:ui-monospace,monospace;font-size:12px;word-break:break-all}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media (max-width:640px){ .row2{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<main>
+<h1>💱 めうまねー (MM) 台帳 引き継ぎツール</h1>
+<p class="hint">宝くじシステムの MM 台帳（ハッシュチェーン付き）を、ネットなしで検証・継続するための単一ファイルツールです。本体の「💱 MM」タブからエクスポートした JSON を読み込んで使います。</p>
+<div class="warn">⚠ <b>これは引き継ぎ用ツールです。複数人で同時に別々の台帳を延ばすと枝分かれします。運用は1人の担当者が引き継いでください</b></div>
+
+<div class="card">
+  <h2>1. 台帳ファイルを読み込む</h2>
+  <div id="drop">ここに JSON ファイルをドロップ<br><span class="hint">またはクリックしてファイルを選ぶ</span></div>
+  <input id="file" type="file" accept=".json,application/json" style="display:none">
+  <div id="loadmsg"></div>
+</div>
+
+<div id="panel" style="display:none">
+  <div class="card">
+    <h2>2. チェーン検証と集計</h2>
+    <div id="verify"></div>
+    <div id="summary"></div>
+    <h2 style="margin-top:16px">自販機ごとの在庫</h2>
+    <div id="machines"></div>
+  </div>
+
+  <div class="card">
+    <h2>3. 記録を1件追加する</h2>
+    <p class="hint">チェーンの続きに新しいレコードを付けます（連番とハッシュは自動で計算）。符号の約束: 発行（D→MM）は dia_delta がプラス / mm_delta がマイナス、還元（MM→D）はその逆、在庫操作は実際の増減です。追加すると選んだ自販機の在庫にも反映されます。</p>
+    <label class="f">自販機</label><select id="f_machine"></select>
+    <div class="row2">
+      <div><label class="f">種別</label><select id="f_kind">
+        <option value="issue">発行（D→MM）</option>
+        <option value="redeem">還元（MM→D）</option>
+        <option value="stock">在庫操作</option>
+      </select></div>
+      <div><label class="f">プレイヤー（在庫操作なら空でOK）</label><input id="f_player" maxlength="32" placeholder="例: Steve_123"></div>
+    </div>
+    <div class="row2">
+      <div><label class="f">dia_delta（ダイヤ在庫の増減）</label><input id="f_dia" type="number" step="1" value="10"></div>
+      <div><label class="f">mm_delta（MM在庫の増減）</label><input id="f_mm" type="number" step="1" value="-10"></div>
+    </div>
+    <div class="row2">
+      <div><label class="f">担当 (seller)</label><input id="f_seller" maxlength="32" placeholder="あなたの販売員名"></div>
+      <div><label class="f">メモ (note)</label><input id="f_note" maxlength="200" placeholder="例: 両替: ダイヤ→MM"></div>
+    </div>
+    <p style="margin-top:14px"><button type="button" onclick="addRecord()">チェーンに追加する</button></p>
+    <div id="addmsg"></div>
+  </div>
+
+  <div class="card">
+    <h2>4. 更新した台帳を保存する</h2>
+    <p class="hint">同じ形式（mm-ledger-export-v1）で書き出します。次に使うときは、このファイルを読み込んでください。</p>
+    <p><button type="button" class="sub" onclick="exportLedger()">📥 台帳をエクスポート (JSON)</button></p>
+    <h2 style="margin-top:18px">記録の一覧（新しい順・直近30件）</h2>
+    <div id="history"></div>
+  </div>
+</div>
+</main>
+
+<script>
+// ===== MM台帳ハッシュチェーン (MMCHAINv1) 純粋ロジック（本体 index.html と同一仕様） =====
+// record_hash = SHA-256("MMCHAINv1|{chain_seq}|{prev_hash}|{machine_id}|{kind}|{player}|{dia_delta}|{mm_delta}|{seller}|{note}")
+// 先頭行の prev_hash は "GENESIS-MM"。
+const MM_GENESIS = "GENESIS-MM";
+function mmChainString(r) {
+  return ["MMCHAINv1", r.chain_seq, r.prev_hash ?? "", String(r.machine_id ?? ""), r.kind ?? "", r.player ?? "", r.dia_delta, r.mm_delta, r.seller ?? "", r.note ?? ""].join("|");
+}
+function sha256HexSync(text) { // 純JSの SHA-256（外部ライブラリなし・オフラインで動かすため）
+  const K = [0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+  const H = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+  const bytes = new TextEncoder().encode(text);
+  const bitLen = bytes.length * 8;
+  const total = ((bytes.length + 9 + 63) >> 6) << 6;
+  const padded = new Uint8Array(total);
+  padded.set(bytes);
+  padded[bytes.length] = 0x80;
+  const dv = new DataView(padded.buffer);
+  dv.setUint32(total - 4, bitLen >>> 0);
+  dv.setUint32(total - 8, Math.floor(bitLen / 4294967296));
+  const w = new Uint32Array(64);
+  const rotr = (x, n) => (x >>> n) | (x << (32 - n));
+  for (let off = 0; off < total; off += 64) {
+    for (let t = 0; t < 16; t++) w[t] = dv.getUint32(off + t * 4);
+    for (let t = 16; t < 64; t++) {
+      const s0 = rotr(w[t - 15], 7) ^ rotr(w[t - 15], 18) ^ (w[t - 15] >>> 3);
+      const s1 = rotr(w[t - 2], 17) ^ rotr(w[t - 2], 19) ^ (w[t - 2] >>> 10);
+      w[t] = (w[t - 16] + s0 + w[t - 7] + s1) | 0;
+    }
+    let a = H[0], b = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
+    for (let t = 0; t < 64; t++) {
+      const S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
+      const ch = (e & f) ^ (~e & g);
+      const t1 = (h + S1 + ch + K[t] + w[t]) | 0;
+      const S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
+      const maj = (a & b) ^ (a & c) ^ (b & c);
+      const t2 = (S0 + maj) | 0;
+      h = g; g = f; f = e; e = (d + t1) | 0;
+      d = c; c = b; b = a; a = (t1 + t2) | 0;
+    }
+    H[0] = (H[0] + a) | 0; H[1] = (H[1] + b) | 0; H[2] = (H[2] + c) | 0; H[3] = (H[3] + d) | 0;
+    H[4] = (H[4] + e) | 0; H[5] = (H[5] + f) | 0; H[6] = (H[6] + g) | 0; H[7] = (H[7] + h) | 0;
+  }
+  return H.map(x => (x >>> 0).toString(16).padStart(8, "0")).join("");
+}
+function verifyMMChainSync(rows) { // rows は chain_seq 昇順。{ok:true,count,head} か {ok:false,atSeq,why}
+  let prev = MM_GENESIS;
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    if (r.chain_seq !== i + 1) return {ok: false, atSeq: r.chain_seq, why: "連番が飛んでいます"};
+    if (r.prev_hash !== prev) return {ok: false, atSeq: r.chain_seq, why: "前のレコードとつながっていません"};
+    if (sha256HexSync(mmChainString(r)) !== r.record_hash) return {ok: false, atSeq: r.chain_seq, why: "ハッシュが合いません（書き換えられた可能性）"};
+    prev = r.record_hash;
+  }
+  return {ok: true, count: rows.length, head: rows.length ? rows[rows.length - 1].record_hash : ""};
+}
+function splitChain(exchanges) { // チェーン行（chain_seq 昇順）とチェーン開始前の行に分ける
+  const chained = exchanges.filter(e => e.chain_seq != null).slice().sort((a, b) => a.chain_seq - b.chain_seq);
+  const prechain = exchanges.filter(e => e.chain_seq == null);
+  return {chained, prechain};
+}
+function mmSummary(exchanges, machines) { // 本体と同じ集計: 発行/還元/流通/裏付け
+  let issued = 0, redeemed = 0;
+  for (const e of exchanges) {
+    if (e.kind === "issue") issued += -(e.mm_delta || 0);
+    else if (e.kind === "redeem") redeemed += (e.mm_delta || 0);
+  }
+  const circulating = issued - redeemed;
+  const backing = (machines || []).reduce((a, mc) => a + (mc.dia_stock || 0), 0);
+  return {issued, redeemed, circulating, backing, balanced: circulating === backing};
+}
+function nextChainRecord(chained, fields) { // チェーンの続きの1件を作る（fields: machine_id/kind/player/dia_delta/mm_delta/seller/note）
+  const tail = chained.length ? chained[chained.length - 1] : null;
+  const rec = {...fields, chain_seq: tail ? tail.chain_seq + 1 : 1, prev_hash: tail ? tail.record_hash : MM_GENESIS, record_hash: ""};
+  rec.record_hash = sha256HexSync(mmChainString(rec));
+  return rec;
+}
+</script>
+
+<script>
+// ===== 画面まわり =====
+const KIND_JP = {issue: "発行（D→MM）", redeem: "還元（MM→D）", stock: "在庫操作"};
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+let ledger = null;
+const $ = id => document.getElementById(id);
+const drop = $("drop"), fileInput = $("file");
+drop.addEventListener("click", () => fileInput.click());
+fileInput.addEventListener("change", () => { if (fileInput.files[0]) loadFile(fileInput.files[0]); });
+drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("over"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", e => { e.preventDefault(); drop.classList.remove("over"); if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); });
+
+function loadFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result);
+      if (data.format !== "mm-ledger-export-v1" || !Array.isArray(data.machines) || !Array.isArray(data.exchanges)) throw new Error("mm-ledger-export-v1 形式のファイルではありません");
+      ledger = data;
+      $("loadmsg").innerHTML = `<div class="ok">読み込みました（書き出し日時: ${esc(data.exported_at || "不明")}）</div>`;
+      render();
+    } catch (e) { $("loadmsg").innerHTML = `<div class="err">読み込めませんでした: ${esc(e.message)}</div>`; }
+  };
+  reader.readAsText(file);
+}
+function render() {
+  if (!ledger) return;
+  $("panel").style.display = "";
+  const {chained, prechain} = splitChain(ledger.exchanges);
+  const v = verifyMMChainSync(chained);
+  const fileHead = ledger.head_hash || "";
+  let vh;
+  if (!v.ok) vh = `<div class="err">⚠ チェーンが壊れています（#${v.atSeq}: ${esc(v.why)}）。台帳が書き換えられた可能性があります</div>`;
+  else if (v.head !== fileHead) vh = `<div class="err">⚠ 先端ハッシュがファイルの記録と一致しません（計算: ${esc(v.head.slice(0, 12))}… ／ 記録: ${esc(fileHead.slice(0, 12))}…）。末尾のレコードが切り捨てられた可能性があります</div>`;
+  else vh = `<div class="ok">✅ 検証OK（チェーン ${v.count} 件${v.count ? ` ／ 先端ハッシュ ${esc(v.head.slice(0, 12))}…` : ""}）</div>`;
+  if (prechain.length) vh += `<p class="hint">チェーン開始前の履歴が ${prechain.length} 件あります（ハッシュ検証の対象外です）</p>`;
+  $("verify").innerHTML = vh;
+  const s = mmSummary(ledger.exchanges, ledger.machines);
+  $("summary").innerHTML = `<div class="kpi">
+    <div class="box"><span>発行した累計</span><b>${s.issued} MM</b></div>
+    <div class="box"><span>還元された累計</span><b>${s.redeemed} MM</b></div>
+    <div class="box"><span>流通中の MM</span><b>${s.circulating} MM</b></div>
+    <div class="box"><span>裏付けのダイヤ（全自販機）</span><b>${s.backing} D</b></div></div>
+    ${s.balanced ? `<p class="ok">✅ 流通中の MM と裏付けダイヤは一致しています</p>` : `<p class="err">⚠ 流通中の MM（${s.circulating}）と裏付けダイヤ（${s.backing}）が ${Math.abs(s.circulating - s.backing)} ずれています</p>`}`;
+  $("machines").innerHTML = ledger.machines.length
+    ? `<div class="scroll"><table><tr><th>名前</th><th>場所</th><th>ダイヤ在庫</th><th>MM在庫</th><th>状態</th></tr>${ledger.machines.map(mc => `<tr><td>${esc(mc.name)}</td><td>${esc(mc.location)}</td><td>${mc.dia_stock} D</td><td>${mc.mm_stock} MM</td><td>${mc.active ? "稼働中" : "停止中"}</td></tr>`).join("")}</table></div>`
+    : `<p class="hint">自販機がありません。</p>`;
+  $("f_machine").innerHTML = ledger.machines.map(mc => `<option value="${esc(String(mc.id))}">${esc(mc.name)}（${esc(mc.location)}）</option>`).join("");
+  const rows = ledger.exchanges.slice().sort((a, b) => (b.chain_seq ?? -1) - (a.chain_seq ?? -1)).slice(0, 30);
+  $("history").innerHTML = rows.length
+    ? `<div class="scroll"><table><tr><th>#</th><th>時刻</th><th>種別</th><th>プレイヤー</th><th>増減</th><th>担当</th><th>ハッシュ</th></tr>${rows.map(e => `<tr><td>${e.chain_seq ?? "―"}</td><td>${esc(String(e.created_at || "").replace("T", " ").slice(0, 16))}</td><td>${KIND_JP[e.kind] || esc(e.kind)}</td><td>${esc(e.player)}</td><td>ダイヤ ${e.dia_delta} / MM ${e.mm_delta}</td><td>${esc(e.seller)}</td><td class="mono">${esc((e.record_hash || "").slice(0, 12))}${e.record_hash ? "…" : ""}</td></tr>`).join("")}</table></div>`
+    : `<p class="hint">まだありません。</p>`;
+}
+function addRecord() {
+  if (!ledger) return;
+  const mid = $("f_machine").value;
+  const mc = ledger.machines.find(x => String(x.id) === mid);
+  if (!mc) { $("addmsg").innerHTML = `<div class="err">自販機を選んでください</div>`; return; }
+  const dia = parseInt($("f_dia").value, 10), mm = parseInt($("f_mm").value, 10);
+  if (!Number.isInteger(dia) || !Number.isInteger(mm) || (dia === 0 && mm === 0)) { $("addmsg").innerHTML = `<div class="err">増減は整数で入れてください（両方0は不可）</div>`; return; }
+  if ((mc.dia_stock || 0) + dia < 0 || (mc.mm_stock || 0) + mm < 0) { $("addmsg").innerHTML = `<div class="err">在庫がマイナスになってしまいます</div>`; return; }
+  const {chained} = splitChain(ledger.exchanges);
+  const numericIds = ledger.exchanges.map(e => e.id).filter(x => typeof x === "number");
+  const rec = nextChainRecord(chained, {
+    machine_id: mc.id,
+    kind: $("f_kind").value,
+    player: $("f_player").value.trim() || null,
+    dia_delta: dia,
+    mm_delta: mm,
+    seller: $("f_seller").value.trim(),
+    note: $("f_note").value.trim()
+  });
+  rec.id = numericIds.length ? Math.max(...numericIds) + 1 : ledger.exchanges.length + 1;
+  rec.created_at = new Date().toISOString();
+  ledger.exchanges.push(rec);
+  mc.dia_stock = (mc.dia_stock || 0) + dia;
+  mc.mm_stock = (mc.mm_stock || 0) + mm;
+  ledger.head_hash = rec.record_hash;
+  render();
+  $("addmsg").innerHTML = `<div class="ok">追加しました（#${rec.chain_seq} ／ ハッシュ ${esc(rec.record_hash.slice(0, 12))}…）。忘れずに下のボタンから台帳を保存してください</div>`;
+}
+function exportLedger() {
+  if (!ledger) return;
+  const {chained, prechain} = splitChain(ledger.exchanges);
+  const payload = {
+    format: "mm-ledger-export-v1",
+    exported_at: new Date().toISOString(),
+    head_hash: chained.length ? chained[chained.length - 1].record_hash : "",
+    machines: ledger.machines,
+    exchanges: [...chained, ...prechain]
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {type: "application/json"});
+  const d = new Date();
+  const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `mm-ledger-${ymd}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+</script>
+</body>
+</html>
