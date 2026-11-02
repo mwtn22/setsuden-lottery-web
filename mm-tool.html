@@ -66,13 +66,14 @@ th{color:var(--sub);font-weight:600}
 
   <div class="card">
     <h2>3. 記録を1件追加する</h2>
-    <p class="hint">チェーンの続きに新しいレコードを付けます（連番とハッシュは自動で計算）。符号の約束: 発行（D→MM）は dia_delta がプラス / mm_delta がマイナス、還元（MM→D）はその逆、在庫操作は実際の増減です。追加すると選んだ自販機の在庫にも反映されます。</p>
+    <p class="hint">チェーンの続きに新しいレコードを付けます（連番とハッシュは自動で計算）。符号の約束: 発行（D→MM）は dia_delta がプラス / mm_delta がマイナス、還元（MM→D）はその逆、在庫操作は実際の増減、棚卸しは差分（実数 − 台帳の在庫）を増減として記録します。追加すると選んだ自販機の在庫にも反映されます。</p>
     <label class="f">自販機</label><select id="f_machine"></select>
     <div class="row2">
       <div><label class="f">種別</label><select id="f_kind">
         <option value="issue">発行（D→MM）</option>
         <option value="redeem">還元（MM→D）</option>
         <option value="stock">在庫操作</option>
+        <option value="audit">棚卸し</option>
       </select></div>
       <div><label class="f">プレイヤー（在庫操作なら空でOK）</label><input id="f_player" maxlength="32" placeholder="例: Steve_123"></div>
     </div>
@@ -179,7 +180,7 @@ function nextChainRecord(chained, fields) { // チェーンの続きの1件を�
 
 <script>
 // ===== 画面まわり =====
-const KIND_JP = {issue: "発行（D→MM）", redeem: "還元（MM→D）", stock: "在庫操作"};
+const KIND_JP = {issue: "発行（D→MM）", redeem: "還元（MM→D）", stock: "在庫操作", audit: "棚卸し"};
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 let ledger = null;
 const $ = id => document.getElementById(id);

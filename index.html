@@ -218,8 +218,19 @@ async function logout() { await sb.auth.signOut(); session = null; profile = nul
 // 公開ページ（名前は出ません）
 async function viewPublic() {
   $main.innerHTML = "<p>読み込み中…</p>";
+  let mmPub = null;
+  try { const {data} = await sb.from("mm_public").select("*").eq("id", 1).maybeSingle(); mmPub = data || null; } catch { mmPub = null; }
+  const mmSection = mmPub ? `<div class="card"><h3>💱 めうまねー (MM)</h3>
+  <p class="hint">節電鯖の独自通貨です。1MM = ダイヤ1個で、いつでも両替できます。台帳はハッシュチェーンで記録されていて、後から書き換えると検出できます。</p>
+  <div class="kpi">
+    <div class="box"><span>流通中の MM</span><b>${mmPub.circulating} MM</b></div>
+    <div class="box"><span>裏付けのダイヤ（全自販機）</span><b>${mmPub.dia_total} D</b></div>
+    <div class="box"><span>台帳チェーン</span><b>${mmPub.chain_count} 件</b></div>
+    <div class="box"><span>先端ハッシュ</span><b style="font-size:13px">${esc((mmPub.head_hash || "").slice(0, 16))}…</b></div>
+    <div class="box"><span>この情報の更新</span><b style="font-size:13px">${fmtTime(mmPub.updated_at)}</b></div>
+  </div></div>` : "";
   const {data: rounds} = await sb.from("public_rounds").select("*").order("id", {ascending: false});
-  if (!rounds || !rounds.length) { $main.innerHTML = `<div class="card"><h2>宝くじ</h2><p>まだ始まっていません。次回をお楽しみに！</p></div>`; return; }
+  if (!rounds || !rounds.length) { $main.innerHTML = `<div class="card"><h2>宝くじ</h2><p>まだ始まっていません。次回をお楽しみに！</p></div>` + mmSection; return; }
   const rnd = currentRound && rounds.find(r => r.id === currentRound) || rounds[0];
   currentRound = rnd.id;
   const {data: stats} = await sb.from("public_number_stats").select("*").eq("round_id", rnd.id);
@@ -244,6 +255,7 @@ async function viewPublic() {
     return `<div class="${cls}"><div class="num">${n}</div><div>${cnt} 枚</div><div class="small">${label}</div></div>`;
   }).join("");
   h += `<div class="card"><h3>番号ごとの売れ行き</h3><p class="hint">買った人の名前は公開されません。配当は「集まった金額 ÷ 当選番号の数 ÷ その番号を買った枚数」で決まります。</p><div class="grid">${cells}</div></div>`;
+  h += mmSection;
   $main.innerHTML = h;
 }
 
@@ -1017,7 +1029,7 @@ async function doProposalApprove(id) {
 }
 
 // ---- めうまねー (MM) 両替：自販機方式。レートは 1D = 1MM 固定 ----
-const MM_KIND_JP = {issue: "発行（D→MM）", redeem: "還元（MM→D）", stock: "在庫操作"};
+const MM_KIND_JP = {issue: "発行（D→MM）", redeem: "還元（MM→D）", stock: "在庫操作", audit: "棚卸し"};
 let mmDir = "issue"; // issue: ダイヤ→MM / redeem: MM→ダイヤ
 let _mmCache = {machines: null, at: 0};
 function invalidateMM() { _mmCache.machines = null; }
@@ -1030,12 +1042,13 @@ async function fetchMachines(force = false) {
 }
 // 集計（単体テスト対象）: exchanges は kind/mm_delta、machines は dia_stock を持つ行の配列
 function mmSummary(exchanges, machines) {
-  let issued = 0, redeemed = 0;
+  let issued = 0, redeemed = 0, auditAdj = 0;
   for (const e of exchanges) {
     if (e.kind === "issue") issued += -(e.mm_delta || 0);       // 発行 = 在庫から出たMM
     else if (e.kind === "redeem") redeemed += (e.mm_delta || 0); // 還元 = 在庫に戻ったMM
+    else if (e.kind === "audit") auditAdj += -(e.mm_delta || 0); // 棚卸し差分 = 在庫から出た分は流通側に出たものとして補正
   }
-  const circulating = issued - redeemed;
+  const circulating = issued - redeemed + auditAdj;
   const backing = (machines || []).reduce((a, mc) => a + (mc.dia_stock || 0), 0);
   return {issued, redeemed, circulating, backing, balanced: circulating === backing};
 }
@@ -1052,6 +1065,35 @@ function mmStockCheck(machine, field, delta) { // 在庫操作でマイナスに
   return (machine[field] || 0) + delta < 0 ? "在庫がマイナスになってしまいます" : null;
 }
 const fmtDelta = (v, unit) => v > 0 ? `+${v}${unit}` : v < 0 ? `${v}${unit}` : `±0${unit}`;
+// ---- MM資産管理: 棚卸し・大口の2人チェック・公開スナップショット ----
+const MM_BIG_THRESHOLD = 100; // |dia_delta| と |mm_delta| の大きい方がこれ以上なら確認者が必須
+function mmNeedsConfirmer(diaDelta, mmDelta) { // 大口判定（単体テスト対象）
+  return Math.max(Math.abs(diaDelta || 0), Math.abs(mmDelta || 0)) >= MM_BIG_THRESHOLD;
+}
+function mmConfirmerCheck(need, confirmer, selfName) { // 確認者チェック（単体テスト対象）。エラー文字列 or null
+  // これは手続き上の統制であり、確認者本人のログインは伴わない（記録に名前を残すだけ）。
+  if (!need) return null;
+  if (!confirmer) return "大口（100以上）の操作のため確認者が必要です。確認者を選んでください";
+  if (confirmer === selfName) return "確認者は自分以外を選んでください";
+  return null;
+}
+function mmAuditDiffs(machine, actualDia, actualMm) { // 棚卸し差分（単体テスト対象）: {diaDelta, mmDelta} か {error}
+  if (!machine) return {error: "自販機が見つかりません"};
+  if (!Number.isInteger(actualDia) || actualDia < 0) return {error: "ダイヤの実数は0以上の整数で入れてください"};
+  if (!Number.isInteger(actualMm) || actualMm < 0) return {error: "MMの実数は0以上の整数で入れてください"};
+  return {diaDelta: actualDia - (machine.dia_stock || 0), mmDelta: actualMm - (machine.mm_stock || 0)};
+}
+function mmPublicText(snap) { // Wiki 等に貼る公開用テキスト（単体テスト対象）。個人名は含めない
+  const head = snap.headHash ? snap.headHash.slice(0, 16) + "…" : "（まだ記録がありません）";
+  return [
+    `【めうまねー (MM) 台帳の公開サマリ】${snap.date} 時点`,
+    `流通中の MM: ${snap.circulating} MM`,
+    `裏付けのダイヤ: ${snap.diaTotal} D（全自販機の在庫合計）`,
+    `自販機の MM 在庫: ${snap.mmStockTotal} MM`,
+    `台帳チェーン: ${snap.chainCount} 件 ／ 先端ハッシュ: ${head}`,
+    `チェーン検証: ${snap.verifyText}`
+  ].join("\n");
+}
 // ---- MM台帳ハッシュチェーン (MMCHAINv1) ----
 // record_hash = SHA-256("MMCHAINv1|{chain_seq}|{prev_hash}|{machine_id}|{kind}|{player}|{dia_delta}|{mm_delta}|{seller}|{note}")
 // 先頭行の prev_hash は "GENESIS-MM"。mm_exchanges への挿入は必ず insertMMExchange 経由にすること（オフライン引き継ぎツール mm-tool.html と同一仕様）。
@@ -1099,25 +1141,37 @@ async function insertMMExchange(mc, kind, player, diaDelta, mmDelta, note) { // 
   }
 }
 async function viewMM(m = "", ok = true) {
-  let machines = [], hist = [], mmTicketTotal = 0, s = mmSummary([], []), chainRes = null, preCount = 0;
+  let machines = [], hist = [], mmTicketTotal = 0, s = mmSummary([], []), chainRes = null, preCount = 0, members = [];
   try {
     machines = await fetchMachines();
-    const [chainData, histRes, tkRes] = await Promise.all([
+    const [chainData, histRes, tkRes, memRes] = await Promise.all([
       fetchMMChain(),
       sb.from("mm_exchanges").select("*").order("created_at", {ascending: false}).limit(30),
-      sb.from("tickets").select("amount_paid").eq("pay_currency", "MM").eq("status", "valid")
+      sb.from("tickets").select("amount_paid").eq("pay_currency", "MM").eq("status", "valid"),
+      sb.from("profiles").select("username").eq("active", true).order("username")
     ]);
     s = mmSummary([...chainData.prechain, ...chainData.chained], machines);
     preCount = chainData.prechain.length;
     chainRes = await verifyMMChain(chainData.chained);
     hist = histRes.data || [];
     mmTicketTotal = (tkRes.data || []).reduce((a, t) => a + (t.amount_paid || 0), 0);
+    members = (memRes.data || []).map(p => p.username).filter(u => u !== profile.username);
+    const chained = chainData.chained;
+    window._mmState = {
+      circulating: s.circulating, diaTotal: s.backing,
+      mmStockTotal: machines.reduce((a, mc) => a + (mc.mm_stock || 0), 0),
+      chainCount: chainRes ? chainRes.count : chained.length,
+      headHash: chained.length ? chained[chained.length - 1].record_hash : "",
+      verifyText: chainRes && chainRes.ok ? `検証OK（チェーン ${chainRes.count} 件を全件再計算）` : `⚠ チェーン異常${chainRes ? `（#${chainRes.atSeq}: ${chainRes.why || "不一致"}）` : ""}`
+    };
   } catch (e) {
     $main.innerHTML = msg(m, ok) + `<div class="card"><h2>💱 めうまねー (MM)</h2><p class="err">読み込めませんでした: ${esc(e.message)}</p><p class="hint">両替用のテーブル (mm_machines / mm_exchanges) がまだ用意されていない可能性があります。</p></div>`;
     return;
   }
   const mName = id => esc((machines.find(x => x.id === id) || {}).name || `#${id}`);
+  const confOpts = sel => `<option value="">（選んでください）</option>` + members.map(u => `<option value="${esc(u)}" ${u === sel ? "selected" : ""}>${esc(u)}</option>`).join("");
   const activeMachines = machines.filter(mc => mc.active);
+  const pa = window._mmAudit || null;
   let h = msg(m, ok) + `<h2>💱 めうまねー (MM)</h2>
   <div class="card"><h3>全体のようす（レート 1D = 1MM）</h3><div class="kpi">
     <div class="box"><span>発行した累計</span><b>${s.issued} MM</b></div>
@@ -1126,19 +1180,32 @@ async function viewMM(m = "", ok = true) {
     <div class="box"><span>裏付けのダイヤ（全自販機）</span><b>${s.backing} D</b></div></div>
     ${s.balanced ? `<p class="ok">✅ 流通中の MM と裏付けダイヤは一致しています</p>` : `<p class="err">⚠ 流通中の MM（${s.circulating}）と裏付けダイヤ（${s.backing}）が ${Math.abs(s.circulating - s.backing)} ずれています。在庫操作の記録を確認してください</p>`}
     <p class="hint">宝くじ売上 (MM): <b>${mmTicketTotal} MM</b>（MM で買われたチケットの合計）</p></div>`;
+  if (pa) h += `<div class="card glow"><h3>🧮 棚卸しの確認</h3>
+    <p><b>${esc(pa.name)}</b> の棚卸しを記録します。</p>
+    <p>台帳の在庫: ダイヤ ${pa.diaStock} D ／ MM ${pa.mmStock} MM<br>実物カウント: ダイヤ ${pa.actualDia} D ／ MM ${pa.actualMm} MM</p>
+    <p>差分: ダイヤ <b>${fmtDelta(pa.diaDelta, "D")}</b> ／ MM <b>${fmtDelta(pa.mmDelta, "MM")}</b> をチェーンに記録し、在庫を実数に合わせます。</p>
+    ${pa.witness ? `<p class="hint">立会人: ${esc(pa.witness)}</p>` : ""}${pa.confirmer ? `<p class="hint">確認者: ${esc(pa.confirmer)}</p>` : ""}
+    <p><button type="button" onclick="doMMAuditExecute()">この内容で記録する</button> <button type="button" class="sub" onclick="window._mmAudit=null;viewMM()">やめる</button></p></div>`;
   h += `<div class="card"><h3>🔗 台帳チェーン（改ざん検知）</h3>
     ${chainRes && chainRes.ok ? `<p class="ok">✅ 検証OK（チェーン ${chainRes.count} 件${chainRes.count ? ` ／ 先端ハッシュ ${esc(chainRes.head.slice(0, 12))}…` : ""}）</p>` : `<p class="err">⚠ チェーンが壊れています${chainRes ? `（#${chainRes.atSeq}: ${esc(chainRes.why || "不一致")}）` : ""}。台帳が書き換えられた可能性があります</p>`}
     ${preCount ? `<p class="hint">チェーン開始前の履歴が ${preCount} 件あります（ハッシュ検証の対象外です）</p>` : ""}
     <p><button type="button" class="sub" onclick="exportMMLedger()">📥 台帳をエクスポート (JSON)</button></p>
     <p class="hint">このシステムが使えなくなっても、エクスポートした JSON と引き継ぎ用ツール（mm-tool.html）で台帳を検証して続けることができます</p></div>`;
+  h += `<div class="card"><h3>🌐 公開スナップショット</h3>
+    <p class="hint">流通量・裏付けダイヤ・台帳チェーンの先端ハッシュだけを、ログイン前の公開ページに表示できます（プレイヤー名や担当者名は出ません）。数字を確認したら更新してください。</p>
+    <p><button type="button" class="sub" onclick="doMMPublicUpdate()">🌐 公開スナップショットを更新</button>
+    <button type="button" class="sub" onclick="doMMCopyPublicText(this)">📋 公開用テキストをコピー</button></p>
+    <p class="hint">公開用テキストは Wiki などに貼って残すためのものです。先端ハッシュを台帳の外に残すと、後から台帳を書き換えても検出できます。</p></div>`;
   h += `<div class="card"><h3>両替する（レート 1D = 1MM）</h3>
   <label class="f">自販機</label><select id="mm_machine">${activeMachines.map(mc => `<option value="${mc.id}">${esc(mc.name)}（${esc(mc.location)}）… ダイヤ ${mc.dia_stock} / MM ${mc.mm_stock}</option>`).join("")}</select>
   <label class="f">方向</label>
   <div class="seg"><button type="button" class="${mmDir === "issue" ? "on" : ""}" onclick="mmDir='issue';viewMM()">💎 ダイヤ → MM（発行）</button><button type="button" class="${mmDir === "redeem" ? "on" : ""}" onclick="mmDir='redeem';viewMM()">💱 MM → ダイヤ（還元）</button></div>
   <label class="f">プレイヤーの Minecraft ID</label><input id="mm_player" maxlength="32" placeholder="例: Steve_123" value="${esc(window._mmPlayer || "")}" oninput="window._mmPlayer=this.value">
   <label class="f">個数（${mmDir === "issue" ? "払うダイヤ = もらう MM" : "払う MM = もらうダイヤ"}）</label><input id="mm_amount" type="number" min="1" value="10">
+  <label class="f">確認者（大口のため確認者が必要：100以上のとき）</label><select id="mm_confirmer" onchange="window._mmConfirmer=this.value">${confOpts(window._mmConfirmer || "")}</select>
   ${activeMachines.length ? `<button class="big" onclick="doMMExchange()">両替する</button>` : `<p class="hint">使える自販機がありません。下の一覧で自販機を用意してください。</p>`}</div>`;
-  h += `<div class="card"><h3>自販機の一覧と在庫操作</h3>`;
+  h += `<div class="card"><h3>自販機の一覧と在庫操作</h3>
+  <label class="f">在庫操作の確認者（大口のため確認者が必要：100以上のとき）</label><select id="mm_stock_confirmer" onchange="window._mmStockConfirmer=this.value">${confOpts(window._mmStockConfirmer || "")}</select>`;
   if (!machines.length) h += `<p class="hint">まだ自販機がありません。${profile.role === "admin" ? "下のフォームから追加してください。" : "管理者に追加してもらってください。"}</p>`;
   else h += machines.map(mc => `<div style="border:1px solid var(--line2);border-radius:12px;padding:12px;margin:10px 0">
     <div><b>${esc(mc.name)}</b> <span class="small">${esc(mc.location)} ／ ${mc.active ? "稼働中" : "停止中"}</span></div>
@@ -1147,7 +1214,14 @@ async function viewMM(m = "", ok = true) {
     <button type="button" class="sub" onclick="doMMStock(${mc.id},'dia_stock',1)">ダイヤ補充</button>
     <button type="button" class="sub" onclick="doMMStock(${mc.id},'dia_stock',-1)">ダイヤ回収</button>
     <button type="button" class="sub" onclick="doMMStock(${mc.id},'mm_stock',1)">MM補充</button>
-    <button type="button" class="sub" onclick="doMMStock(${mc.id},'mm_stock',-1)">MM回収</button></div></div>`).join("");
+    <button type="button" class="sub" onclick="doMMStock(${mc.id},'mm_stock',-1)">MM回収</button></div>
+    <div style="margin-top:12px;border-top:1px dashed var(--line2);padding-top:10px">
+    <div class="small" style="margin-bottom:6px">🧮 棚卸し（実物を数えて、台帳の在庫と合わせます。差分はチェーンに記録されます）</div>
+    <div class="stepper"><input id="aud_dia_${mc.id}" type="number" min="0" step="1" placeholder="ダイヤ実数" style="width:120px">
+    <input id="aud_mm_${mc.id}" type="number" min="0" step="1" placeholder="MM実数" style="width:120px"></div>
+    <label class="f">立会人（任意）</label><input id="aud_wit_${mc.id}" maxlength="32" placeholder="例: Alex_9">
+    <label class="f">確認者（差分が100以上のとき必須）</label><select id="aud_conf_${mc.id}">${confOpts("")}</select>
+    <p style="margin-top:10px"><button type="button" class="sub" onclick="doMMAuditPrepare(${mc.id})">棚卸しをする</button></p></div></div>`).join("");
   if (profile.role === "admin") h += `<h3 style="margin-top:18px">自販機を追加（管理者）</h3>
   <label class="f">名前</label><input id="mm_new_name" placeholder="例: 両替機1号">
   <label class="f">場所</label><input id="mm_new_loc" placeholder="例: スポーン前、銀行の横 など">
@@ -1197,8 +1271,11 @@ async function doMMExchange() {
     const err = mmExchangeCheck(mmDir, mc, n); if (err) throw new Error(err);
     const diaDelta = mmDir === "issue" ? n : -n;
     const mmDelta = mmDir === "issue" ? -n : n;
-    await applyMMExchange(mc, mmDir, player, diaDelta, mmDelta, mmDir === "issue" ? "両替: ダイヤ→MM" : "両替: MM→ダイヤ");
-    await audit("mm_exchange", `machine=${mc.id} kind=${mmDir} player=${player} n=${n}`);
+    const confirmer = window._mmConfirmer || "";
+    const cerr = mmConfirmerCheck(mmNeedsConfirmer(diaDelta, mmDelta), confirmer, profile.username); if (cerr) throw new Error(cerr);
+    const note = (mmDir === "issue" ? "両替: ダイヤ→MM" : "両替: MM→ダイヤ") + (confirmer ? ` 確認:${confirmer}` : "");
+    await applyMMExchange(mc, mmDir, player, diaDelta, mmDelta, note);
+    await audit("mm_exchange", `machine=${mc.id} kind=${mmDir} player=${player} n=${n} confirmer=${confirmer || "-"}`);
     viewMM(mmDir === "issue" ? `${esc(player)} さん: ${n}D → ${n}MM を渡しました（${esc(mc.name)}）` : `${esc(player)} さん: ${n}MM → ${n}D を渡しました（${esc(mc.name)}）`);
   } catch (e) { viewMM(esc(e.message), false); }
 }
@@ -1210,9 +1287,12 @@ async function doMMStock(id, field, sign) {
     const mc = machines.find(x => x.id === id);
     const delta = sign * n;
     const err = mmStockCheck(mc, field, delta); if (err) throw new Error(err);
+    const diaDelta = field === "dia_stock" ? delta : 0, mmDelta = field === "mm_stock" ? delta : 0;
+    const confirmer = window._mmStockConfirmer || "";
+    const cerr = mmConfirmerCheck(mmNeedsConfirmer(diaDelta, mmDelta), confirmer, profile.username); if (cerr) throw new Error(cerr);
     const label = (field === "dia_stock" ? "ダイヤ" : "MM") + (sign > 0 ? "補充" : "回収");
-    await applyMMExchange(mc, "stock", null, field === "dia_stock" ? delta : 0, field === "mm_stock" ? delta : 0, `在庫操作: ${label}`);
-    await audit("mm_stock", `machine=${id} ${label} ${n}`);
+    await applyMMExchange(mc, "stock", null, diaDelta, mmDelta, `在庫操作: ${label}` + (confirmer ? ` 確認:${confirmer}` : ""));
+    await audit("mm_stock", `machine=${id} ${label} ${n} confirmer=${confirmer || "-"}`);
     viewMM(`${esc(mc.name)}: ${label} ${n} しました`);
   } catch (e) { viewMM(esc(e.message), false); }
 }
@@ -1227,6 +1307,53 @@ async function doMMAddMachine() {
     await audit("mm_machine_add", `name=${name} location=${location}`);
     viewMM(`自販機「${esc(name)}」を追加しました。在庫操作からダイヤと MM を入れてください`);
   } catch (e) { viewMM(esc(e.message), false); }
+}
+async function doMMAuditPrepare(id) { // 棚卸し: 実数を入れて差分を確認画面に出す
+  try {
+    const num = elId => { const v = (document.getElementById(elId)?.value ?? "").trim(); return v === "" ? NaN : Number(v); };
+    const actualDia = num("aud_dia_" + id), actualMm = num("aud_mm_" + id);
+    const witness = (document.getElementById("aud_wit_" + id)?.value || "").trim();
+    const confirmer = document.getElementById("aud_conf_" + id)?.value || "";
+    const machines = await fetchMachines(true);
+    const mc = machines.find(x => x.id === id);
+    const d = mmAuditDiffs(mc, actualDia, actualMm); if (d.error) throw new Error(d.error);
+    const cerr = mmConfirmerCheck(mmNeedsConfirmer(d.diaDelta, d.mmDelta), confirmer, profile.username); if (cerr) throw new Error(cerr);
+    window._mmAudit = {machineId: id, name: mc.name, diaStock: mc.dia_stock || 0, mmStock: mc.mm_stock || 0, actualDia, actualMm, diaDelta: d.diaDelta, mmDelta: d.mmDelta, witness, confirmer};
+    viewMM();
+  } catch (e) { viewMM(esc(e.message), false); }
+}
+async function doMMAuditExecute() { // 棚卸し: 差分をチェーンに記録して在庫を実数に合わせる
+  const p = window._mmAudit;
+  if (!p) return viewMM();
+  try {
+    const machines = await fetchMachines(true);
+    const mc = machines.find(x => x.id === p.machineId);
+    const d = mmAuditDiffs(mc, p.actualDia, p.actualMm); if (d.error) throw new Error(d.error); // 準備後に在庫が動いていたら差分を取り直す
+    let note = `棚卸し 実数D${p.actualDia}/MM${p.actualMm}`;
+    if (p.witness) note += ` 立会:${p.witness}`;
+    if (p.confirmer) note += ` 確認:${p.confirmer}`;
+    await applyMMExchange(mc, "audit", null, d.diaDelta, d.mmDelta, note);
+    await audit("mm_audit", `machine=${mc.id} actual_dia=${p.actualDia} actual_mm=${p.actualMm} diff_dia=${d.diaDelta} diff_mm=${d.mmDelta} witness=${p.witness || "-"} confirmer=${p.confirmer || "-"}`);
+    window._mmAudit = null;
+    viewMM(`${esc(mc.name)} の棚卸しを記録しました（在庫を実数に合わせました）`);
+  } catch (e) { window._mmAudit = null; viewMM(esc(e.message), false); }
+}
+async function doMMPublicUpdate() { // 公開ページ用のスナップショット (mm_public id=1) を更新する
+  try {
+    const st = window._mmState;
+    if (!st) throw new Error("集計がまだできていません");
+    const {error} = await sb.from("mm_public").upsert({id: 1, circulating: st.circulating, dia_total: st.diaTotal, mm_stock_total: st.mmStockTotal, head_hash: st.headHash, chain_count: st.chainCount, updated_at: new Date().toISOString(), updated_by: profile.username});
+    if (error) throw error;
+    await audit("mm_public_update", `circulating=${st.circulating} dia_total=${st.diaTotal} chain=${st.chainCount} head=${(st.headHash || "").slice(0, 16)}`);
+    viewMM("公開スナップショットを更新しました（公開ページに流通量・裏付け・先端ハッシュが出ます）");
+  } catch (e) { viewMM("公開スナップショットを更新できませんでした: " + esc(e.message), false); }
+}
+async function doMMCopyPublicText(btn) { // Wiki 等に貼る公開用テキストをコピーする
+  const st = window._mmState;
+  if (!st) return viewMM("集計がまだできていません", false);
+  const d = new Date();
+  const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  await copyBookText(mmPublicText({date, circulating: st.circulating, diaTotal: st.diaTotal, mmStockTotal: st.mmStockTotal, chainCount: st.chainCount, headHash: st.headHash, verifyText: st.verifyText}), btn);
 }
 
 // ---- その他メニュー（スマホ用） ----
