@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>節電鯖 宝くじ</title>
+<link rel="preconnect" href="https://hfcnvdplnqqbrzpttpqy.supabase.co">
+<link rel="dns-prefetch" href="https://cdn.jsdelivr.net">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 :root{
@@ -84,6 +86,22 @@ th{color:var(--sub);font-weight:600}
 .stickybar .sum{font-size:15px;white-space:nowrap}
 .stickybar button{flex:1;padding:14px;font-size:16px}
 .scroll{overflow-x:auto}
+.tabbar{display:none}
+.bookpage{width:100%;min-height:150px;font-family:ui-monospace,monospace;font-size:14px;line-height:1.5;white-space:pre-wrap}
+@media (max-width:860px){
+  header nav{display:none}
+  .tabbar{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:50;background:rgba(7,11,16,.92);backdrop-filter:blur(14px);border-top:1px solid var(--line);padding:6px 4px calc(6px + env(safe-area-inset-bottom))}
+  .tabbar a{flex:1;text-align:center;color:var(--sub);text-decoration:none;font-size:11px;padding:7px 0 5px;border-radius:12px}
+  .tabbar a .ic{display:block;font-size:21px;line-height:1.15}
+  .tabbar a.on{color:#04222a;background:linear-gradient(135deg,var(--dia),var(--dia2));font-weight:800}
+  main{padding-bottom:120px}
+  .stickybar{bottom:64px}
+  .pick{grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:9px}
+  .pick button{padding:14px 2px;font-size:18px}
+  .grid{grid-template-columns:repeat(auto-fill,minmax(100px,1fr))}
+  button,.btn{padding:13px 18px}
+  th,td{padding:9px 7px}
+}
 .hero{padding:26px 20px;background:linear-gradient(135deg,rgba(62,230,238,.14),rgba(255,217,77,.08) 60%,transparent);border:1px solid var(--line);border-radius:var(--radius);margin:16px 0;box-shadow:0 12px 34px rgba(0,0,0,.35)}
 .hero .big{font-size:30px;font-weight:900}
 @media (max-width:640px){ .ball{width:54px;height:54px;font-size:21px} main{padding:14px 12px 110px} }
@@ -92,6 +110,7 @@ th{color:var(--sub);font-weight:600}
 <body>
 <header><div class="row"><span class="logo">🎟 節電鯖 宝くじ</span><nav id="nav"></nav></div></header>
 <main id="main"></main>
+<div id="tabbar" class="tabbar"></div>
 <script>
 const SUPABASE_URL = "https://hfcnvdplnqqbrzpttpqy.supabase.co";
 const SUPABASE_KEY = "sb_publishable_Zdf-FwE0uoRDLvxwLIGxRQ_Ut56VGhB";
@@ -109,7 +128,7 @@ const todayISO = () => new Date().toISOString().slice(0, 10);
 function addDays(iso, d) { const t = new Date(iso + "T00:00:00"); t.setDate(t.getDate() + d); return t.toISOString().slice(0, 10); }
 function addMonths(iso, m) { const t = new Date(iso + "T00:00:00"); const day = t.getDate(); t.setMonth(t.getMonth() + m); if (t.getDate() < day) t.setDate(0); return t.toISOString().slice(0, 10); }
 function msg(html, ok = true) { return html ? `<div class="${ok ? "ok" : "err"}">${html}</div>` : ""; }
-async function audit(action, detail) { if (profile) await sb.from("audit").insert({actor: profile.username, action, detail}); }
+async function audit(action, detail) { invalidateCache(); if (profile) await sb.from("audit").insert({actor: profile.username, action, detail}); }
 
 // 計算ルール（サーバ版と同じ）
 const prizeFund = (total, price, rate = 100) => Math.floor(total * price * rate / 100);
@@ -134,9 +153,21 @@ function redemptionFee(gross, isSponsor, today, rnd) {
   return null;
 }
 
-// データ取得
-async function fetchRounds() { const {data, error} = await sb.from("rounds").select("*").order("id", {ascending: false}); if (error) throw error; return data; }
-async function fetchTickets(roundId) { const {data, error} = await sb.from("tickets").select("*").eq("round_id", roundId).order("id"); if (error) throw error; return data; }
+// データ取得（短時間キャッシュで体感速度アップ。書き込み後は invalidateCache() で消す）
+const _cache = {rounds: null, roundsAt: 0, tickets: {}};
+const CACHE_MS = 20000;
+function invalidateCache(roundId) { _cache.rounds = null; if (roundId) delete _cache.tickets[roundId]; else _cache.tickets = {}; }
+async function fetchRounds(force = false) {
+  if (!force && _cache.rounds && Date.now() - _cache.roundsAt < CACHE_MS) return _cache.rounds;
+  const {data, error} = await sb.from("rounds").select("*").order("id", {ascending: false}); if (error) throw error;
+  _cache.rounds = data; _cache.roundsAt = Date.now(); return data;
+}
+async function fetchTickets(roundId, force = false) {
+  const c = _cache.tickets[roundId];
+  if (!force && c && Date.now() - c.at < CACHE_MS) return c.data;
+  const {data, error} = await sb.from("tickets").select("*").eq("round_id", roundId).order("id"); if (error) throw error;
+  _cache.tickets[roundId] = {data, at: Date.now()}; return data;
+}
 function statsFromTickets(tickets) {
   const counts = {};
   for (const t of tickets) if (t.status === "valid") counts[t.number] = (counts[t.number] || 0) + 1;
@@ -165,9 +196,17 @@ function renderNav() {
   const link = (hash, label) => `<a href="#${hash}" class="${h === hash ? "on" : ""}">${label}</a>`;
   if (!session) $nav.innerHTML = link("public", "📊 みんなの実績") + link("claim", "🕹 自販機で買った方") + link("login", "🔑 販売員ログイン");
   else if (!profile || !profile.active) $nav.innerHTML = `<span class="badge">${esc(profile?.username || "")}：有効化まち</span><button class="sub" onclick="logout()">ログアウト</button>`;
-  else $nav.innerHTML = link("app", "🏠 ホーム") + link("sell", "🎟 売る") + link("lots", "🕹 自販機") + link("donations", "🎁 寄付") + link("numbers", "🔢 番号一覧") + link("winners", "🏆 当選・引換") + link("manage", "🛠 券の管理")
+  else $nav.innerHTML = link("app", "🏠 ホーム") + link("sell", "🎟 売る") + link("lots", "🕹 自販機") + link("donations", "🎁 寄付") + link("numbers", "🔢 番号一覧") + link("winners", "🏆 当選・引換") + link("manage", "🛠 券の管理") + link("book", "📖 本")
     + (profile.role === "admin" ? link("rounds", "回・設定") + link("users", "販売員") + link("audit", "記録") : "")
     + `<span class="badge">${esc(profile.username)}</span><button class="sub" onclick="logout()">ログアウト</button>`;
+}
+function renderTabbar() {
+  const h = (location.hash || "#public").slice(1);
+  const tab = (hash, ic, label) => `<a href="#${hash}" class="${h === hash ? "on" : ""}"><span class="ic">${ic}</span>${label}</a>`;
+  const el = document.getElementById("tabbar");
+  if (!session) el.innerHTML = tab("public", "📊", "実績") + tab("claim", "🕹", "自販機") + tab("login", "🔑", "ログイン");
+  else if (!profile || !profile.active) el.innerHTML = tab("public", "📊", "実績") + tab("claim", "🕹", "自販機");
+  else el.innerHTML = tab("app", "🏠", "ホーム") + tab("sell", "🎟", "売る") + tab("lots", "🕹", "自販機") + tab("winners", "🏆", "当選") + tab("book", "📖", "本") + tab("more", "☰", "その他");
 }
 async function logout() { await sb.auth.signOut(); session = null; profile = null; location.hash = "#public"; render(); }
 
@@ -281,12 +320,16 @@ async function pickRound() {
 async function viewApp(m = "", ok = true) {
   const {rounds, rnd} = await pickRound();
   if (!rnd) { $main.innerHTML = msg(m, ok) + `<div class="card"><h2>ホーム</h2><p>まだ「回」が作られていません。${profile.role === "admin" ? `<a href="#rounds">最初の回を作る</a>` : "管理者に回を作ってもらってください。"}</p></div>`; return; }
-  const tickets = await fetchTickets(rnd.id);
+  const [tickets, lotsRes, donsRes] = await Promise.all([
+    fetchTickets(rnd.id),
+    sb.from("lots").select("status,size").eq("round_id", rnd.id),
+    sb.from("donations").select("amount_db,tickets_entitled,tickets_issued").eq("round_id", rnd.id)
+  ]);
   const {total} = statsFromTickets(tickets);
-  const {data: lots} = await sb.from("lots").select("status,size").eq("round_id", rnd.id);
+  const lots = lotsRes.data;
   const stocked = (lots || []).filter(l => l.status === "stocked").length;
   const claimed = (lots || []).filter(l => l.status !== "stocked").length;
-  const {data: dons} = await sb.from("donations").select("amount_db,tickets_entitled,tickets_issued").eq("round_id", rnd.id);
+  const dons = donsRes.data;
   const donSum = (dons || []).reduce((a, d) => ({db: a.db + d.amount_db, rest: a.rest + (d.tickets_entitled - d.tickets_issued)}), {db: 0, rest: 0});
   let h = msg(m, ok) + `<h2>ホーム</h2>` + roundPicker(rounds, "#app");
   h += `<div class="card"><div class="kpi">
@@ -316,11 +359,11 @@ function sellSummary(rnd) {
 async function viewSell(m = "", ok = true) {
   const {rounds, rnd} = await pickRound();
   if (!rnd) { $main.innerHTML = `<div class="card">回がありません。</div>`; return; }
-  const tickets = await fetchTickets(rnd.id);
+  const [tickets, donsRes] = await Promise.all([fetchTickets(rnd.id), sb.from("donations").select("*").eq("round_id", rnd.id)]);
   sellCounts = statsFromTickets(tickets).counts;
   window._sellPrice = rnd.price;
   const recentBuyers = [...new Set(tickets.slice().reverse().map(t => t.buyer))].slice(0, 8);
-  const {data: dons} = await sb.from("donations").select("*").eq("round_id", rnd.id);
+  const dons = donsRes.data;
   const avail = (dons || []).filter(d => d.tickets_issued < d.tickets_entitled);
   const grid = VALID_NUMBERS.map(n => {
     const sel = sellSel[n] || 0;
@@ -431,7 +474,7 @@ async function doSell() {
     await audit("sell", `round=${rnd.id} buyer=${buyer} numbers=${numbers} source=${sellSource}`);
     const doneTotal = numbers.length, doneList = numbers.join(", ");
     sellSel = {}; window._sellBuyer = "";
-    viewSell(`${esc(buyer)} さんに ${doneTotal} 枚売りました（番号: ${doneList}／金額の目安 ${amountEach * doneTotal}D）`);
+    viewSell(`${esc(buyer)} さんに ${doneTotal} 枚売りました（番号: ${doneList}／金額の目安 ${amountEach * doneTotal}D）<br><a href="#book" onclick="window._bookKind='ticket';window._bookBuyer='${esc(buyer)}'">📖 この人の「券の本」用テキストを作る</a>`);
   } catch (e) { viewSell(esc(e.message), false); }
 }
 
@@ -541,8 +584,8 @@ async function viewNumbers() {
   h += `</div></div>`;
   const agg = {};
   tickets.filter(t => t.status === "valid").forEach(t => { const a = agg[t.buyer] ||= {cnt: 0, paid: 0}; a.cnt++; a.paid += t.amount_paid; });
-  const rows = Object.entries(agg).sort((a, b) => b[1].cnt - a[1].cnt).map(([b, a]) => `<tr><td>${esc(b)}</td><td>${a.cnt} 枚</td><td>${total ? (a.cnt / total * 100).toFixed(1) : 0}%</td><td>${a.paid}D</td></tr>`).join("");
-  h += `<div class="card"><h3>買った人ごと</h3><div class="scroll"><table><tr><th>買った人</th><th>枚数</th><th>全体に占める割合</th><th>払った金額</th></tr>${rows}</table></div></div>`;
+  const rows = Object.entries(agg).sort((a, b) => b[1].cnt - a[1].cnt).map(([b, a]) => `<tr><td>${esc(b)}</td><td>${a.cnt} 枚</td><td>${total ? (a.cnt / total * 100).toFixed(1) : 0}%</td><td>${a.paid}D</td><td><button class="sub" onclick="window._bookKind='ticket';window._bookBuyer='${esc(b)}';location.hash='#book'">📖 券の本</button></td></tr>`).join("");
+  h += `<div class="card"><h3>買った人ごと</h3><div class="scroll"><table><tr><th>買った人</th><th>枚数</th><th>全体に占める割合</th><th>払った金額</th><th></th></tr>${rows}</table></div></div>`;
   $main.innerHTML = h;
 }
 
@@ -572,7 +615,7 @@ async function viewWinners(m = "", ok = true) {
     return `<tr><td>${esc(buyer)}</td><td>${w.winTickets.join(", ")}</td><td>${w.gross}D</td><td>${w.isSponsor ? "寄付・スポンサー" : "ふつう"}</td><td>${feeTxt}</td><td>${state}</td></tr>`;
   }).join("");
   h += `<div class="card"><h3>当選した人</h3><p class="hint">渡せる期間: 手数料なしは ${esc(rnd.redeem_free_until || "未設定")} まで ／ 手数料1割で ${esc(rnd.redeem_ext_until || "未設定")} まで ／ 寄付・スポンサーは ${esc(rnd.sponsor_redeem_until || "未設定")} まで手数料なし。渡すときは券を見せてもらってね。</p><div class="scroll"><table><tr><th>当選した人</th><th>当たった番号</th><th>配当</th><th>区分</th><th>今日渡す場合</th><th>引換</th></tr>${rows}</table></div></div>`;
-  h += `<div class="card"><h3>お金の内訳</h3><p>配当のもと（集まった金額 × ${rnd.payout_rate}%）: ${fund}D ／ 当選した人へ合計: ${grossSum}D ／ <b>余った ${fund - grossSum}D は Gate07 へ寄付</b></p></div>`;
+  h += `<div class="card"><h3>お金の内訳</h3><p>配当のもと（集まった金額 × ${rnd.payout_rate}%）: ${fund}D ／ 当選した人へ合計: ${grossSum}D ／ <b>余った ${fund - grossSum}D は Gate07 へ寄付</b></p><button class="sub" onclick="window._bookKind='winners';location.hash='#book'">📖 当選発表の本を作る</button></div>`;
   if (reds && reds.length) h += `<div class="card"><h3>渡した記録</h3><div class="scroll"><table><tr><th>当選した人</th><th>配当</th><th>手数料</th><th>渡した額</th><th>担当</th></tr>${reds.map(r => `<tr><td>${esc(r.buyer)}</td><td>${r.gross}D</td><td>${r.fee}D</td><td>${r.net}D</td><td>${esc(r.redeemed_by)}</td></tr>`).join("")}</table></div></div>`;
   $main.innerHTML = h;
 }
@@ -704,6 +747,7 @@ async function doRoundDates(id) {
   const patch = {redeem_free_until: document.getElementById("free_" + id).value || null, redeem_ext_until: document.getElementById("ext_" + id).value || null, sponsor_redeem_until: document.getElementById("spon_" + id).value || null};
   const {error} = await sb.from("rounds").update(patch).eq("id", id);
   if (error) return viewRounds(esc(error.message), false);
+  invalidateCache();
   viewRounds("期限を保存しました");
 }
 async function doExportCsv() {
@@ -739,10 +783,102 @@ async function viewAudit() {
   $main.innerHTML = `<div class="card"><h2>操作の記録（新しい順・200件）</h2><div class="scroll"><table><tr><th>日時</th><th>やった人</th><th>操作</th><th>内容</th></tr>${(data || []).map(r => `<tr><td>${esc((r.at || "").slice(0, 16).replace("T", " "))}</td><td>${esc(r.actor)}</td><td>${esc(r.action)}</td><td>${esc(r.detail)}</td></tr>`).join("")}</table></div></div>`;
 }
 
+// ---- Minecraftの本用テキスト ----
+const BOOK_MAX_CHARS = 200, BOOK_MAX_LINES = 12;
+function paginateBook(lines) {
+  const pages = []; let cur = [], curLen = 0;
+  const push = () => { if (cur.length) { pages.push(cur.join("\n")); cur = []; curLen = 0; } };
+  for (let line of lines) {
+    while (line.length > 38) { // 1行が長いときは折る
+      if (cur.length >= BOOK_MAX_LINES) push();
+      cur.push(line.slice(0, 38)); curLen += 39; line = line.slice(38);
+      if (curLen > BOOK_MAX_CHARS) push();
+    }
+    if (cur.length >= BOOK_MAX_LINES || curLen + line.length + 1 > BOOK_MAX_CHARS) push();
+    cur.push(line); curLen += line.length + 1;
+  }
+  push();
+  return pages.length ? pages : [""];
+}
+function groupNums(nums, per = 4) {
+  const out = [];
+  for (let i = 0; i < nums.length; i += per) out.push(nums.slice(i, i + per).join(", "));
+  return out;
+}
+function ticketBook(rnd, buyer, tickets) {
+  const mine = tickets.filter(t => t.buyer === buyer && t.status === "valid");
+  const nums = mine.map(t => t.number);
+  const lines = ["節電鯖 宝くじ", rnd.name, "", "買った人:", buyer, "", `番号（${nums.length}枚）:`]
+    .concat(groupNums(nums))
+    .concat(["", `1枚 ${rnd.price} ダイヤ`, "当たったら この本を", "持ってきてね！", "", "なくさないでね"]);
+  return {title: `宝くじ券 ${rnd.name}`.slice(0, 32), pages: paginateBook(lines)};
+}
+function winnersBook(rnd, tickets) {
+  const winners = computeWinners(tickets, rnd);
+  const lines = ["節電鯖 宝くじ", rnd.name, "★ 当選発表 ★", "", "当選番号:"]
+    .concat(groupNums([...(rnd.winning_numbers || [])].sort((a, b) => a - b)))
+    .concat(["", "当選した人:"]);
+  const entries = Object.entries(winners).sort((a, b) => b[1].gross - a[1].gross);
+  if (!entries.length) lines.push("（なし）");
+  entries.forEach(([b, w]) => { lines.push(`${b}`); lines.push(` ${w.gross} ダイヤ`); });
+  lines.push("", `引換は ${rnd.redeem_free_until || ""} まで`, "手数料なしです", "券の本を持ってきてね");
+  return {title: `当選発表 ${rnd.name}`.slice(0, 32), pages: paginateBook(lines)};
+}
+async function copyBookText(text, btn) {
+  try { await navigator.clipboard.writeText(text); }
+  catch { const ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); }
+  if (btn) { const old = btn.textContent; btn.textContent = "✅ コピーした"; setTimeout(() => btn.textContent = old, 1500); }
+}
+async function viewBook(m = "", ok = true) {
+  const {rounds, rnd} = await pickRound();
+  if (!rnd) { $main.innerHTML = `<div class="card">回がありません。</div>`; return; }
+  const tickets = await fetchTickets(rnd.id);
+  const buyers = [...new Set(tickets.filter(t => t.status === "valid").map(t => t.buyer))].sort();
+  const kind = window._bookKind || "ticket";
+  const buyer = window._bookBuyer && buyers.includes(window._bookBuyer) ? window._bookBuyer : (buyers[0] || "");
+  $main.innerHTML = msg(m, ok) + roundPicker(rounds, "#book") + `<div class="card"><h2>📖 Minecraftの本を作る</h2>
+  <p class="hint">ゲーム内の「本と羽ペン」に貼れる形で出します。1ページずつコピーして、本のページに貼ってください（1ページ = 本の1ページ分に収まる長さに区切ってあります）。本のタイトルも付けられます（32文字まで）。</p>
+  <label class="f">作るもの</label>
+  <div class="seg">
+    <button type="button" class="${kind === "ticket" ? "on" : ""}" onclick="window._bookKind='ticket';viewBook()">🎟 券の本（買った人へ渡す）</button>
+    <button type="button" class="${kind === "winners" ? "on" : ""}" onclick="window._bookKind='winners';viewBook()">🏆 当選発表の本</button>
+  </div>
+  ${kind === "ticket" ? `<label class="f">誰の券ですか</label><select id="b_buyer" onchange="window._bookBuyer=this.value;viewBook()">${buyers.map(b => `<option ${b === buyer ? "selected" : ""}>${esc(b)}</option>`).join("")}</select>` : ""}
+  <div id="book_out"></div></div>`;
+  const out = document.getElementById("book_out");
+  if (kind === "ticket") {
+    if (!buyer) { out.innerHTML = `<p class="hint">まだ券が売れていません。</p>`; return; }
+    renderBookOut(out, ticketBook(rnd, buyer, tickets));
+  } else {
+    if (!(rnd.winning_numbers || []).length) { out.innerHTML = `<p class="hint">まだ抽選していません。抽選のあとで作れます。</p>`; return; }
+    renderBookOut(out, winnersBook(rnd, tickets));
+  }
+}
+function renderBookOut(out, book) {
+  const all = book.pages.join("\n\n===== 次のページ =====\n\n");
+  out.innerHTML = `<label class="f">本のタイトル（コピーして使えます）</label>
+  <div style="display:flex;gap:8px"><input id="book_title" value="${esc(book.title)}" readonly><button class="sub" onclick="copyBookText(document.getElementById('book_title').value, this)">コピー</button></div>
+  ${book.pages.map((p, i) => `<label class="f">${i + 1} ページ目（${p.length}文字）</label><textarea class="bookpage" id="bp_${i}" readonly>${esc(p)}</textarea><button class="sub" onclick="copyBookText(document.getElementById('bp_${i}').value, this)">📋 このページをコピー</button>`).join("")}
+  <p style="margin-top:14px"><button class="sub" onclick='copyBookText(${JSON.stringify(all)}, this)'>📋 ぜんぶまとめてコピー（ページ区切り付き）</button></p>
+  <p class="hint">渡すときは署名をして「本」にすると、コピー元の本として扱えます（昔のルールでも有効な券は署名済みの本でした）。</p>`;
+}
+
+// ---- その他メニュー（スマホ用） ----
+function viewMore() {
+  const item = (hash, label, desc) => `<a href="#${hash}" style="display:block;color:var(--txt);text-decoration:none;padding:14px 4px;border-bottom:1px solid var(--line2)"><b>${label}</b><br><span class="small">${desc}</span></a>`;
+  $main.innerHTML = `<div class="card"><h2>その他</h2>
+  ${item("numbers", "🔢 番号一覧", "番号ごとの買った人と配当")}
+  ${item("donations", "🎁 寄付", "寄付の受付と残り枚数")}
+  ${item("manage", "🛠 券の管理", "無効化と譲渡")}
+  ${item("public", "📊 みんなの実績", "公開ページを見る")}
+  ${profile.role === "admin" ? item("rounds", "⚙ 回・設定", "回の作成と状態変更") + item("users", "👥 販売員", "有効化と役割") + item("audit", "📝 記録", "操作ログ") : ""}
+  </div>`;
+}
+
 // ---- ルータ ----
 async function render() {
   const hash = (location.hash || "#public").slice(1);
-  renderNav();
+  renderNav(); renderTabbar();
   if (!session && !["public", "claim", "login", "register"].includes(hash)) { location.hash = "#public"; return; }
   if (session && profile && !profile.active && !["public", "claim"].includes(hash)) {
     $main.innerHTML = `<div class="card"><h2>もう少し待ってね</h2><p>アカウント「${esc(profile.username)}」は、まだ管理者に有効化されていません。有効化されたら使えるようになります。</p></div>`;
@@ -760,6 +896,8 @@ async function render() {
     case "numbers": return viewNumbers();
     case "winners": return viewWinners();
     case "manage": return viewManage();
+    case "book": return viewBook();
+    case "more": return viewMore();
     case "rounds": return profile?.role === "admin" ? viewRounds() : viewApp();
     case "users": return profile?.role === "admin" ? viewUsers() : viewApp();
     case "audit": return profile?.role === "admin" ? viewAudit() : viewApp();
