@@ -196,7 +196,7 @@ function renderNav() {
   const link = (hash, label) => `<a href="#${hash}" class="${h === hash ? "on" : ""}">${label}</a>`;
   if (!session) $nav.innerHTML = link("public", "📊 みんなの実績") + link("claim", "🕹 自販機で買った方") + link("login", "🔑 販売員ログイン");
   else if (!profile || !profile.active) $nav.innerHTML = `<span class="badge">${esc(profile?.username || "")}：有効化まち</span><button class="sub" onclick="logout()">ログアウト</button>`;
-  else $nav.innerHTML = link("app", "🏠 ホーム") + link("sell", "🎟 売る") + link("lots", "🕹 自販機") + link("donations", "🎁 寄付") + link("numbers", "🔢 番号一覧") + link("winners", "🏆 当選・引換") + link("manage", "🛠 券の管理") + link("book", "📖 本")
+  else $nav.innerHTML = link("app", "🏠 ホーム") + link("sell", "🎟 売る") + link("lots", "🕹 自販機") + link("donations", "🎁 寄付") + link("numbers", "🔢 番号一覧") + link("winners", "🏆 当選・引換") + link("manage", "🛠 券の管理") + link("book", "📖 本") + link("proposals", "🤝 提案")
     + (profile.role === "admin" ? link("rounds", "回・設定") + link("users", "販売員") + link("audit", "記録") : "")
     + `<span class="badge">${esc(profile.username)}</span><button class="sub" onclick="logout()">ログアウト</button>`;
 }
@@ -206,7 +206,7 @@ function renderTabbar() {
   const el = document.getElementById("tabbar");
   if (!session) el.innerHTML = tab("public", "📊", "実績") + tab("claim", "🕹", "自販機") + tab("login", "🔑", "ログイン");
   else if (!profile || !profile.active) el.innerHTML = tab("public", "📊", "実績") + tab("claim", "🕹", "自販機");
-  else el.innerHTML = tab("app", "🏠", "ホーム") + tab("sell", "🎟", "売る") + tab("lots", "🕹", "自販機") + tab("winners", "🏆", "当選") + tab("book", "📖", "本") + tab("more", "☰", "その他");
+  else el.innerHTML = tab("app", "🏠", "ホーム") + tab("sell", "🎟", "売る") + tab("lots", "🕹", "自販機") + tab("winners", "🏆", "当選") + tab("book", "📖", "本") + tab("proposals", "🤝", "提案") + tab("more", "☰", "その他");
 }
 async function logout() { await sb.auth.signOut(); session = null; profile = null; location.hash = "#public"; render(); }
 
@@ -863,6 +863,150 @@ function renderBookOut(out, book) {
   <p class="hint">渡すときは署名をして「本」にすると、コピー元の本として扱えます（昔のルールでも有効な券は署名済みの本でした）。</p>`;
 }
 
+// ---- 承認待ち提案（mod / Muse からの提案をウェブでも承認・実行） ----
+const PROP_STATUS_JP = {pending: "承認待ち", approved: "処理中", executed: "✅ 実行ずみ", rejected: "❌ 却下", failed: "⚠ 失敗"};
+const PROP_BY_JP = {"mod-local": "🎮 mod", "Muse": "🤖 おとうふ", "muse": "🤖 おとうふ", "manual": "✋ 手動"};
+const fmtTime = iso => iso ? String(iso).slice(0, 16).replace("T", " ") : "";
+async function viewProposals(m = "", ok = true) {
+  const [pendRes, doneRes, inboxRes] = await Promise.all([
+    sb.from("agent_proposals").select("*").eq("seller", profile.username).eq("status", "pending").order("created_at", {ascending: false}),
+    sb.from("agent_proposals").select("*").eq("seller", profile.username).in("status", ["executed", "rejected", "failed"]).order("created_at", {ascending: false}).limit(20),
+    sb.from("agent_inbox").select("*").eq("seller", profile.username).order("created_at", {ascending: false}).limit(20)
+  ]);
+  const pend = pendRes.data || [], done = doneRes.data || [], inbox = inboxRes.data || [];
+  let h = msg(m, ok) + `<div class="card"><h2>🤝 承認待ちの提案</h2>
+  <p class="hint">ゲームのチャットなどから来た注文の提案です。「承認して実行」を押したものだけが実際に登録されます。mod と同時に押しても、二重に登録されることはありません。</p>`;
+  if (pendRes.error) h += msg(esc(pendRes.error.message), false);
+  if (!pend.length) h += `<p class="hint">承認待ちはありません。</p>`;
+  h += pend.map(p => `<div style="border:1px solid var(--line2);border-radius:12px;padding:12px;margin:10px 0">
+    <div><b>${esc(p.summary)}</b></div>
+    <div class="small" style="margin:4px 0 10px">作成: ${esc(PROP_BY_JP[p.created_by] || p.created_by)} ／ ${fmtTime(p.created_at)}</div>
+    <button onclick="doProposalApprove(${p.id})">✅ 承認して実行</button>
+    <button class="danger" onclick="doProposalReject(${p.id})">却下</button></div>`).join("");
+  h += `</div><div class="card"><h3>処理ずみ（直近20件）</h3>`;
+  if (!done.length) h += `<p class="hint">まだありません。</p>`;
+  else h += `<div class="scroll"><table><tr><th>内容</th><th>状態</th><th>結果</th><th>時刻</th></tr>${done.map(p => `<tr><td>${esc(p.summary)}</td><td>${PROP_STATUS_JP[p.status] || esc(p.status)}</td><td>${esc(p.result)}</td><td>${fmtTime(p.decided_at || p.created_at)}</td></tr>`).join("")}</table></div>`;
+  h += `</div><div class="card"><h3>📥 受付箱（直近20件）</h3><p class="hint">mod が受け付けた発言です。ここは見るだけです。</p>`;
+  if (!inbox.length) h += `<p class="hint">まだありません。</p>`;
+  else h += `<div class="scroll"><table><tr><th>発言者</th><th>内容</th><th>状態</th><th>時刻</th></tr>${inbox.map(r => `<tr><td>${esc(r.speaker)}</td><td>${esc(r.raw)}</td><td>${esc(r.status)}</td><td>${fmtTime(r.created_at)}</td></tr>`).join("")}</table></div>`;
+  h += `</div>`;
+  $main.innerHTML = h;
+}
+// 二重実行防止: pending のときだけ approved にできた人（画面）だけが実行する
+async function claimProposal(id) {
+  const {data, error} = await sb.from("agent_proposals").update({status: "approved", decided_at: new Date().toISOString()}).eq("id", id).eq("status", "pending").select();
+  if (error) throw error;
+  return data && data.length ? data[0] : null;
+}
+async function finishProposal(id, status, result) {
+  const {error} = await sb.from("agent_proposals").update({status, result, decided_at: new Date().toISOString()}).eq("id", id).eq("status", "approved");
+  if (error) throw error;
+}
+async function doProposalReject(id) {
+  const {data, error} = await sb.from("agent_proposals").update({status: "rejected", decided_at: new Date().toISOString()}).eq("id", id).eq("status", "pending").select();
+  if (error) return viewProposals(esc(error.message), false);
+  if (!data || !data.length) return viewProposals("他の画面/modで処理済みです", false);
+  await audit("proposal_reject", `proposal=${id}`);
+  viewProposals("却下しました");
+}
+function filterCandidates(filter) {
+  if (!filter) return [...VALID_NUMBERS];
+  if (filter === "even") return VALID_NUMBERS.filter(n => n % 2 === 0);
+  if (filter === "odd") return VALID_NUMBERS.filter(n => n % 2 === 1);
+  if (filter === "zoro") return VALID_NUMBERS.filter(n => Math.floor(n / 10) === n % 10);
+  if (filter.startsWith("tail:")) { const d = parseInt(filter.slice(5), 10); return VALID_NUMBERS.filter(n => n % 10 === d); }
+  if (filter.startsWith("tens:")) { const t = parseInt(filter.slice(5), 10); return VALID_NUMBERS.filter(n => Math.floor(n / 10) * 10 === t); }
+  return null;
+}
+function pickOmakaseNumbers(counts, count, filter) {
+  const cand = filterCandidates(filter);
+  if (!cand) throw new Error(`未対応の条件です: ${filter}`);
+  if (!cand.length) throw new Error("候補の番号がありません");
+  if (filter && count > cand.length) throw new Error(`条件「${filter}」の候補は ${cand.length} 個しかなく、${count} 枚は選べません`);
+  const picked = {}, out = [];
+  for (let i = 0; i < count; i++) {
+    const min = Math.min(...cand.map(n => (counts[n] || 0) + (picked[n] || 0)));
+    const least = cand.filter(n => (counts[n] || 0) + (picked[n] || 0) === min);
+    const n = least[secureRandomInt(least.length)];
+    picked[n] = (picked[n] || 0) + 1; out.push(n);
+  }
+  return out.sort((a, b) => a - b);
+}
+async function execProposalSale(action) {
+  const buyer = String(action.buyer || "").trim();
+  if (!/^[A-Za-z0-9_]{3,32}$/.test(buyer)) throw new Error(`購入者のIDが不正です: ${buyer}`);
+  const rounds = await fetchRounds(true);
+  const rnd = rounds.find(r => ["preparing", "selling"].includes(r.status));
+  if (!rnd) throw new Error("売れる回がありません（販売中の回なし）");
+  let numbers;
+  if (action.mode === "omakase") {
+    const count = parseInt(action.count, 10);
+    if (!count || count < 1 || count > 1000) throw new Error(`おまかせの枚数が不正です: ${action.count}`);
+    const tickets = await fetchTickets(rnd.id, true);
+    numbers = pickOmakaseNumbers(statsFromTickets(tickets).counts, count, action.filter || "");
+  } else {
+    numbers = (action.numbers || []).map(n => parseInt(n, 10));
+    if (!numbers.length) throw new Error("番号がありません");
+    if (numbers.some(n => !VALID_NUMBERS.includes(n))) throw new Error(`無効な番号が含まれています: ${numbers.join(", ")}`);
+  }
+  const source = ["face", "vending", "donation", "sponsor"].includes(action.source) ? action.source : "face";
+  const rows = numbers.map(n => ({round_id: rnd.id, buyer, number: n, seller: profile.username, source, amount_paid: rnd.price}));
+  const {error} = await sb.from("tickets").insert(rows); if (error) throw error;
+  invalidateCache(rnd.id);
+  return `${buyer} に ${numbers.join(", ")} の ${numbers.length} 枚を登録（${rnd.name}）`;
+}
+async function proposalBook(buyer) {
+  const rounds = await fetchRounds();
+  for (const r of rounds) {
+    const tickets = await fetchTickets(r.id);
+    if (tickets.some(t => t.buyer === buyer && t.status === "valid")) return ticketBook(r, buyer, tickets);
+  }
+  const {rnd} = await pickRound();
+  if (!rnd) throw new Error("回がありません");
+  return ticketBook(rnd, buyer, await fetchTickets(rnd.id));
+}
+function showBookModal(book) {
+  closeBookModal();
+  const ov = document.createElement("div");
+  ov.id = "book_modal";
+  ov.style.cssText = "position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.72);overflow:auto;padding:16px";
+  ov.innerHTML = `<div class="card" style="max-width:760px;margin:20px auto"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h3 style="margin:0">📖 券の本</h3><button class="sub" onclick="closeBookModal()">閉じる</button></div><div id="prop_book_out"></div></div>`;
+  document.body.appendChild(ov);
+  renderBookOut(document.getElementById("prop_book_out"), book);
+}
+function closeBookModal() { document.getElementById("book_modal")?.remove(); }
+async function doProposalApprove(id) {
+  let claimed;
+  try { claimed = await claimProposal(id); }
+  catch (e) { return viewProposals(esc(e.message), false); }
+  if (!claimed) return viewProposals("他の画面/modで処理済みです", false);
+  const action = claimed.action || {};
+  try {
+    if (action.type === "register_sale") {
+      const result = await execProposalSale(action);
+      await finishProposal(id, "executed", result);
+      await audit("proposal_execute", `proposal=${id} ${result}`);
+      viewProposals(`実行しました: ${esc(result)}`);
+    } else if (action.type === "fill_book") {
+      const book = await proposalBook(String(action.buyer || ""));
+      await finishProposal(id, "executed", "本を表示");
+      await audit("proposal_execute", `proposal=${id} fill_book buyer=${action.buyer}`);
+      await viewProposals(`${esc(action.buyer)} さんの券の本を表示しました`);
+      showBookModal(book);
+    } else if (action.type === "toast") {
+      await finishProposal(id, "executed", `画面表示のみ: ${action.text || ""}`);
+      await audit("proposal_execute", `proposal=${id} toast`);
+      viewProposals(`表示のみの提案です: ${esc(action.text || "")}`);
+    } else {
+      await finishProposal(id, "failed", `未対応の提案です: ${action.type || "不明"}`);
+      viewProposals("未対応の提案だったので、失敗として記録しました", false);
+    }
+  } catch (e) {
+    try { await finishProposal(id, "failed", e.message); } catch {}
+    viewProposals(`実行できませんでした: ${esc(e.message)}`, false);
+  }
+}
+
 // ---- その他メニュー（スマホ用） ----
 function viewMore() {
   const item = (hash, label, desc) => `<a href="#${hash}" style="display:block;color:var(--txt);text-decoration:none;padding:14px 4px;border-bottom:1px solid var(--line2)"><b>${label}</b><br><span class="small">${desc}</span></a>`;
@@ -897,6 +1041,7 @@ async function render() {
     case "winners": return viewWinners();
     case "manage": return viewManage();
     case "book": return viewBook();
+    case "proposals": return viewProposals();
     case "more": return viewMore();
     case "rounds": return profile?.role === "admin" ? viewRounds() : viewApp();
     case "users": return profile?.role === "admin" ? viewUsers() : viewApp();
