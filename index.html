@@ -203,7 +203,7 @@ const CATS = [
   {key: "home", label: "ホーム", pages: [["app", "ホーム"]]},
   {key: "sales", label: "販売", pages: [["sell", "売る"], ["lots", "自販機"], ["donations", "寄付"], ["manage", "券の管理"]]},
   {key: "result", label: "結果", pages: [["numbers", "番号一覧"], ["winners", "当選・引換"], ["book", "本"]]},
-  {key: "mm", label: "MM", pages: [["mm", "MM"], ["trade", "MM取引"]]},
+  {key: "mm", label: "MM", pages: [["mm", "MM"], ["trade", "ウォレット"]]},
   {key: "admin", label: "管理", pages: [["rounds", "回・設定"], ["users", "販売員"], ["audit", "記録"]], adminPages: ["rounds", "users", "audit"]},
 ];
 function curHash() {
@@ -219,7 +219,7 @@ function catOf(h) {
 function renderNav() {
   const h = curHash();
   const link = (hash, label) => `<a href="#${hash}" class="${h === hash ? "on" : ""}">${label}</a>`;
-  if (!session) $nav.innerHTML = link("public", "みんなの実績") + link("claim", "自販機で買った方") + link("trade", "MM取引") + link("login", "販売員ログイン");
+  if (!session) $nav.innerHTML = link("public", "みんなの実績") + link("claim", "自販機で買った方") + link("trade", "ウォレット") + link("login", "販売員ログイン");
   else if (!profile || !profile.active) $nav.innerHTML = `<span class="badge">${esc(profile?.username || "")}：有効化まち</span><button class="sub" onclick="logout()">ログアウト</button>`;
   else {
     const cat = catOf(h);
@@ -241,7 +241,7 @@ function renderTabbar() {
   const h = curHash();
   const tab = (hash, ic, label) => `<a href="#${hash}" class="${h === hash ? "on" : ""}"><span class="ic">${ic}</span>${label}</a>`;
   const el = document.getElementById("tabbar");
-  if (!session) el.innerHTML = tab("public", "", "実績") + tab("claim", "", "自販機") + tab("trade", "", "取引") + tab("login", "", "ログイン");
+  if (!session) el.innerHTML = tab("public", "", "実績") + tab("claim", "", "自販機") + tab("trade", "", "ウォレット") + tab("login", "", "ログイン");
   else if (!profile || !profile.active) el.innerHTML = tab("public", "", "実績") + tab("claim", "", "自販機");
   else {
     const cat = catOf(h);
@@ -1632,13 +1632,13 @@ async function viewTrade(m = "", ok = true) {
       } catch (e) { tradeVerify = {verified: false, uuid: "", verifiedBy: ""}; }
     }
   } catch (e) {
-    $main.innerHTML = msg(m, ok) + `<div class="card"><h2>MM取引</h2><p class="err">読み込めませんでした: ${esc(e.message)}</p><p class="hint">取引テーブル (mm_offers / mm_transfers) がまだ用意されていない可能性があります。</p></div>`;
+    $main.innerHTML = msg(m, ok) + `<div class="card"><h2>ウォレット</h2><p class="err">読み込めませんでした: ${esc(e.message)}</p><p class="hint">取引テーブル (mm_offers / mm_transfers) がまだ用意されていない可能性があります。</p></div>`;
     return;
   }
   const me = tradePlayer;
   const balance = me ? mmtBalanceOf(transfers, me.mcid) : 0;
-  let h = msg(m, ok) + `<h2>MM取引 (めうまねー)</h2>
-  <p class="hint">プレイヤー同士で MM を送金したり、アイテム取引の代金を MM で決済したりするためのページです。アイテムの受け渡しはゲーム内で行い、MM の支払いだけがここで確定します。出品のリンクを Discord などに貼って使うことを想定しています。</p>`;
+  let h = msg(m, ok) + `<h2>ウォレット</h2>
+  <p class="hint">めうまねー (MM) の残高ページです。MM は残高として持ち、送金やアイテム取引の支払いに使います。現物の MM は、残高への入金と残高からの出金の窓口のひとつです。アイテムの受け渡しはゲーム内で行い、MM の支払いだけがここで確定します。出品のリンクを Discord などに貼って使うことを想定しています。</p>`;
   // リンクから開いた出品の詳細
   if (tradeFocusId) {
     h += `<div class="card" id="trade_detail"><h3>出品の詳細</h3>`;
@@ -1653,41 +1653,64 @@ async function viewTrade(m = "", ok = true) {
           ? (focus.poster === me.mcid
             ? `<p class="hint">これは自分の出品です。</p>`
             : `<p><button type="button" onclick="doTradeAccept('${focus.id}')">この内容で取引する (${focus.price_mm}MM)</button></p>`)
-          : `<p class="hint">取引するには、下のプレイヤー情報で登録・ログインしてください。</p>`;
+          : `<p class="hint">取引するには、ウォレットに登録・ログインしてください。</p>`;
       } else h += `<p class="hint">この出品は${focus.status === "done" ? "取引成立ずみ" : "取り消しずみ"}です${focus.partner ? ` (相手: ${esc(focus.partner)})` : ""}。</p>`;
     }
     h += `<p><a href="#trade">掲示板にもどる</a></p></div>`;
   }
-  // プレイヤーパネル
-  h += `<div class="card"><h3>プレイヤー情報</h3>`;
   if (!me) {
-    h += `<label class="f">Minecraft ID</label><input id="tp_mcid" maxlength="16" placeholder="例: Steve_123" value="${esc(localStorage.getItem("mm_trade_mcid") || "")}">
+    // ログイン・登録パネル
+    h += `<div class="card"><h3>ウォレットにログイン・登録</h3>
+    <p class="hint">登録すると、この Minecraft ID のウォレット (残高) が使えるようになります。</p>
+    <label class="f">Minecraft ID</label><input id="tp_mcid" maxlength="16" placeholder="例: Steve_123" value="${esc(localStorage.getItem("mm_trade_mcid") || "")}">
     <label class="f">暗証番号 (数字4〜8桁)</label><input id="tp_pin" type="password" inputmode="numeric" autocomplete="off" maxlength="8">
     <label class="f">本人確認コード (登録時)</label><input id="tp_code" autocomplete="off" maxlength="6" style="text-transform:uppercase">
     <p class="hint">コードは対面で販売員から受け取ってください。</p>
     <p><button type="button" onclick="doTradeLogin()">ログイン</button>
     <button type="button" class="sub" onclick="doTradeRegister()">はじめて登録</button></p>
-    <p class="hint">暗証番号は使い回さないでください (他のサービスと同じものにしない)。このページの暗証番号はメモリ内だけに保持され、保存されません。アイテムの受け渡しはゲーム内で行ってください。MM の支払いだけがここで確定します。</p>`;
+    <p class="hint">暗証番号は使い回さないでください (他のサービスと同じものにしない)。このページの暗証番号はメモリ内だけに保持され、保存されません。アイテムの受け渡しはゲーム内で行ってください。MM の支払いだけがここで確定します。</p></div>`;
   } else {
-    h += `<p><b>${esc(me.mcid)}</b>　残高: <b>${balance} MM</b>　<button type="button" class="sub" onclick="doTradeLogout()">ログアウト</button></p>`;
-    // 本人確認 (対面コード方式)
-    h += `<h3 style="margin-top:16px">本人確認</h3>`;
-    if (tradeVerify && tradeVerify.verified) {
-      if (tradeVerify.verifiedBy) h += `<p>本人確認ずみ（確認者: ${esc(tradeVerify.verifiedBy)}）</p>`;
-      else if (tradeVerify.uuid) h += `<p>本人確認ずみ (UUID: ${esc(tradeVerify.uuid.slice(0, 8))}…)</p>`;
-      else h += `<p>本人確認ずみ</p>`;
-    } else {
-      h += `<p class="hint">販売員に対面で発行してもらったコードを入力してください。</p>
-      <label class="f">本人確認コード</label><input id="tp_verify_code" autocomplete="off" maxlength="6" style="text-transform:uppercase">
-      <p><button type="button" onclick="doTradeVerifyWithCode()">本人確認する</button></p>`;
-    }
-    h += `
+    // ウォレットカード (残高・本人確認の状態・送金)
+    const verifyText = tradeVerify && tradeVerify.verified
+      ? (tradeVerify.verifiedBy ? `本人確認ずみ (確認者: ${esc(tradeVerify.verifiedBy)})`
+        : tradeVerify.uuid ? `本人確認ずみ (UUID: ${esc(tradeVerify.uuid.slice(0, 8))}…)`
+        : "本人確認ずみ")
+      : "本人確認はまだです";
+    h += `<div class="card"><h3>ウォレット</h3>
+    <p><b>${esc(me.mcid)}</b>　${verifyText}　<button type="button" class="sub" onclick="doTradeLogout()">ログアウト</button></p>
+    <div class="kpi" style="margin:10px 0"><div class="box"><span>残高</span><b>${balance} MM</b></div></div>
+    <p class="hint">入金: ダイヤまたは現物MMを運営に渡すと、残高に反映されます。出金: 残高から現物MMで受け取れます。どちらも運営窓口で手続きしてください。</p>
     <h3 style="margin-top:16px">送金</h3>
     <label class="f">相手の Minecraft ID</label><input id="tp_to" maxlength="16" placeholder="例: Alex_9">
     <label class="f">金額 (MM)</label><input id="tp_amount" type="number" min="1" value="10">
     <label class="f">メモ (任意)</label><input id="tp_note" maxlength="200">
-    <p><button type="button" onclick="doTradeSend()">送金する</button></p>
-    <h3 style="margin-top:16px">出品する</h3>
+    <p><button type="button" onclick="doTradeSend()">送金する</button></p>`;
+    // 本人確認 (対面コード方式。状態はウォレット上部に出し、未確認のときだけ入力欄を出す)
+    if (!(tradeVerify && tradeVerify.verified)) {
+      h += `<h3 style="margin-top:16px">本人確認</h3>
+      <p class="hint">販売員に対面で発行してもらったコードを入力してください。</p>
+      <label class="f">本人確認コード</label><input id="tp_verify_code" autocomplete="off" maxlength="6" style="text-transform:uppercase">
+      <p><button type="button" onclick="doTradeVerifyWithCode()">本人確認する</button></p>`;
+    }
+    h += `</div>`;
+    // 自分の履歴
+    const mine = transfers.filter(t => t.from_player === me.mcid || t.to_player === me.mcid).slice(-20).reverse();
+    h += `<div class="card"><h3>自分の履歴 (直近20件)</h3>`;
+    if (!mine.length) h += `<p class="hint">まだありません。</p>`;
+    else h += `<div class="scroll"><table><tr><th>時刻</th><th>種別</th><th>相手</th><th>金額</th><th>メモ</th></tr>${mine.map(t => {
+      const inTx = t.to_player === me.mcid;
+      const other = t.from_player === "OPERATOR" || t.to_player === "OPERATOR" ? "運営"
+        : t.from_player === "VOID" || t.to_player === "VOID" ? "無効化"
+        : (inTx ? t.from_player : t.to_player);
+      return `<tr><td>${fmtTime(t.created_at)}</td><td>${MMT_KIND_JP[t.kind] || esc(t.kind)}</td><td>${esc(other)}</td><td>${inTx ? "+" : "-"}${t.amount} MM</td><td>${esc(t.note)}</td></tr>`;
+    }).join("")}</table></div>`;
+    h += `</div>`;
+  }
+  // 取引掲示板 (ログイン中は出品フォームと自分の出品もこのカードに置く)
+  const shown = offers.filter(o => tradeSideFilter === "all" || o.side === tradeSideFilter);
+  h += `<div class="card"><h3>取引掲示板 (受付中 ${offers.length} 件)</h3>`;
+  if (me) {
+    h += `<h3 style="margin-top:16px">出品する</h3>
     <div class="seg"><button type="button" class="${tradeOfferSide === "sell" ? "on" : ""}" onclick="tradeOfferSide='sell';viewTrade()">売りたい</button><button type="button" class="${tradeOfferSide === "buy" ? "on" : ""}" onclick="tradeOfferSide='buy';viewTrade()">買いたい</button></div>
     <label class="f">アイテム名</label><input id="tp_item" maxlength="80" placeholder="例: ダイヤモンド">
     <label class="f">個数</label><input id="tp_qty" type="number" min="1" value="1">
@@ -1701,22 +1724,8 @@ async function viewTrade(m = "", ok = true) {
       <b>${o.side === "sell" ? "売りたい" : "買いたい"}</b> ${esc(o.item)} × ${o.qty}　<b>${o.price_mm} MM</b>
       <span class="small">${o.status === "open" ? "受付中" : o.status === "done" ? `成立 (相手: ${esc(o.partner)})` : "取り消し"} ／ ${fmtTime(o.created_at)}</span>
       ${o.status === "open" ? `<p style="margin:6px 0 0"><button type="button" class="sub" onclick="copyBookText('${location.origin}${location.pathname}#trade-${o.id}', this)">リンクをコピー</button> <button type="button" class="sub" onclick="doTradeCancel('${o.id}')">取り消す</button></p>` : ""}</div>`).join("");
-    const mine = transfers.filter(t => t.from_player === me.mcid || t.to_player === me.mcid).slice(-20).reverse();
-    h += `<h3 style="margin-top:16px">自分の取引履歴 (直近20件)</h3>`;
-    if (!mine.length) h += `<p class="hint">まだありません。</p>`;
-    else h += `<div class="scroll"><table><tr><th>時刻</th><th>種別</th><th>相手</th><th>金額</th><th>メモ</th></tr>${mine.map(t => {
-      const inTx = t.to_player === me.mcid;
-      const other = t.from_player === "OPERATOR" || t.to_player === "OPERATOR" ? "運営"
-        : t.from_player === "VOID" || t.to_player === "VOID" ? "無効化"
-        : (inTx ? t.from_player : t.to_player);
-      return `<tr><td>${fmtTime(t.created_at)}</td><td>${MMT_KIND_JP[t.kind] || esc(t.kind)}</td><td>${esc(other)}</td><td>${inTx ? "+" : "-"}${t.amount} MM</td><td>${esc(t.note)}</td></tr>`;
-    }).join("")}</table></div>`;
   }
-  h += `</div>`;
-  // 掲示板
-  const shown = offers.filter(o => tradeSideFilter === "all" || o.side === tradeSideFilter);
-  h += `<div class="card"><h3>取引掲示板 (受付中 ${offers.length} 件)</h3>
-  <div class="seg"><button type="button" class="${tradeSideFilter === "all" ? "on" : ""}" onclick="tradeSideFilter='all';viewTrade()">すべて</button><button type="button" class="${tradeSideFilter === "sell" ? "on" : ""}" onclick="tradeSideFilter='sell';viewTrade()">売りたい</button><button type="button" class="${tradeSideFilter === "buy" ? "on" : ""}" onclick="tradeSideFilter='buy';viewTrade()">買いたい</button></div>`;
+  h += `<div class="seg"><button type="button" class="${tradeSideFilter === "all" ? "on" : ""}" onclick="tradeSideFilter='all';viewTrade()">すべて</button><button type="button" class="${tradeSideFilter === "sell" ? "on" : ""}" onclick="tradeSideFilter='sell';viewTrade()">売りたい</button><button type="button" class="${tradeSideFilter === "buy" ? "on" : ""}" onclick="tradeSideFilter='buy';viewTrade()">買いたい</button></div>`;
   if (!shown.length) h += `<p class="hint">表示する出品がありません。</p>`;
   else h += shown.map(o => tradeOfferCard(o)).join("");
   h += `</div>`;
@@ -1831,7 +1840,7 @@ function viewMore() {
   ${item("donations", "寄付", "寄付の受付と残り枚数")}
   ${item("manage", "券の管理", "無効化と譲渡")}
   ${item("mm", "MM両替", "めうまねー (MM) の発行・還元と自販機の在庫")}
-  ${item("trade", "MM取引", "プレイヤー同士の MM 送金とアイテム取引の掲示板")}
+  ${item("trade", "ウォレット", "MM の残高・送金とアイテム取引の掲示板")}
   ${item("public", "みんなの実績", "公開ページを見る")}
   ${profile.role === "admin" ? item("rounds", "回・設定", "回の作成と状態変更") + item("users", "販売員", "有効化と役割") + item("audit", "記録", "操作ログ") : ""}
   </div>`;
