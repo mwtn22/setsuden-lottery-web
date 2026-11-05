@@ -1238,6 +1238,9 @@ async function viewMM(m = "", ok = true) {
     <p><button type="button" class="sub" onclick="doMMPublicUpdate()">公開スナップショットを更新</button>
     <button type="button" class="sub" onclick="doMMCopyPublicText(this)">公開用テキストをコピー</button></p>
     <p class="hint">公開用テキストは Wiki などに貼って残すためのものです。先端ハッシュを台帳の外に残すと、後から台帳を書き換えても検出できます。</p></div>`;
+  if (profile.role === "admin") h += `<div class="card"><h3>フルバックアップ（管理者）</h3>
+    <p class="hint">プレイヤーの暗証番号ハッシュを含む全データを JSON で保存します。取り扱いに注意してください。ダウンロードの前に、送金チェーンと台帳チェーンを全件再計算して検証します。復元は restore.html で復元用 SQL を作って行います。</p>
+    <p><button type="button" class="sub" onclick="doMMBackup()">フルバックアップをダウンロード</button></p></div>`;
   h += `<div class="card"><h3>プレイヤー残高への預かり / 払い戻し</h3>
   <p class="hint">プレイヤーから現物の MM を受け取ったら「預かり」（残高が増えます）、残高ぶんの現物 MM を渡したら「払い戻し」（残高が減ります）。記録は送金台帳（公開）に残ります。</p>
   <label class="f">プレイヤーの Minecraft ID</label><input id="mm_op_player" maxlength="16" placeholder="例: Steve_123">
@@ -1334,6 +1337,30 @@ async function exportMMLedger() { // 台帳全体を JSON でダウンロード�
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   } catch (e) { alert("エクスポートできませんでした: " + e.message); }
+}
+async function doMMBackup() { // 管理者用フルバックアップ: 両チェーンを検証してから mm_backup_all の JSON を保存する
+  try {
+    const [transfers, chainData] = await Promise.all([fetchMMTransfers(), fetchMMChain()]);
+    const tRes = await verifyMMTChain(transfers.filter(t => t.chain_seq != null).sort((a, b) => a.chain_seq - b.chain_seq));
+    if (!tRes.ok) return viewMM(`送金チェーンが壊れているためバックアップを止めました（#${tRes.atSeq}: ${tRes.why || "不一致"}）`, false);
+    const eRes = await verifyMMChain(chainData.chained);
+    if (!eRes.ok) return viewMM(`台帳チェーンが壊れているためバックアップを止めました（#${eRes.atSeq}: ${eRes.why || "不一致"}）`, false);
+    const res = await mmRpc("mm_backup_all", {});
+    if (!res || !res.ok) {
+      const code = res && res.error;
+      return viewMM(code === "not_admin" ? "管理者だけがバックアップできます" : `バックアップできませんでした（${code || "不明なエラー"}）`, false);
+    }
+    const blob = new Blob([JSON.stringify(res.backup, null, 2)], {type: "application/json"});
+    const d = new Date();
+    const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `mm-backup-${ymd}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    await audit("mm_backup", "フルバックアップをダウンロード");
+    viewMM("フルバックアップをダウンロードしました");
+  } catch (e) { viewMM(esc(e.message), false); }
 }
 async function doMMExchange() {
   try {
