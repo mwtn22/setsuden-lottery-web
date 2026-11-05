@@ -81,6 +81,11 @@ th{color:var(--sub);font-weight:600}
 .stickybar .sum{font-size:15px;white-space:nowrap}
 .stickybar button{flex:1;padding:13px;font-size:16px}
 .scroll{overflow-x:auto}
+.subnav{background:#fff;border-bottom:1px solid var(--line2)}
+.subnav .in{max-width:1120px;margin:0 auto;padding:7px 16px;display:flex;gap:6px;flex-wrap:wrap}
+.subnav a{color:var(--sub);text-decoration:none;padding:5px 10px;border-radius:6px;border:1px solid var(--line2);background:#fff;font-size:13px}
+.subnav a:hover{border-color:var(--acc);color:var(--acc)}
+.subnav a.on{background:var(--accbg);color:var(--acc);font-weight:700;border-color:var(--acc)}
 .tabbar{display:none}
 .bookpage{width:100%;min-height:150px;font-family:ui-monospace,monospace;font-size:14px;line-height:1.5;white-space:pre-wrap}
 @media (max-width:860px){
@@ -104,6 +109,7 @@ th{color:var(--sub);font-weight:600}
 </head>
 <body>
 <header><div class="row"><span class="logo">節電鯖 宝くじ</span><nav id="nav"></nav></div></header>
+<div id="subnav" class="subnav" style="display:none"></div>
 <main id="main"></main>
 <div id="tabbar" class="tabbar"></div>
 <script>
@@ -190,25 +196,55 @@ function computeWinners(tickets, rnd) {
   return Object.fromEntries(Object.entries(result).filter(([, v]) => v.winTickets.length));
 }
 
-// ナビ
-function renderNav() {
+// ナビ（カテゴリ方式: 上部 nav・サブタブ・下部バーはすべて CATS から生成する）
+const CATS = [
+  {key: "home", label: "ホーム", pages: [["app", "ホーム"]]},
+  {key: "sales", label: "販売", pages: [["sell", "売る"], ["lots", "自販機"], ["donations", "寄付"], ["manage", "券の管理"]]},
+  {key: "result", label: "結果", pages: [["numbers", "番号一覧"], ["winners", "当選・引換"], ["book", "本"]]},
+  {key: "mm", label: "MM", pages: [["mm", "MM"], ["trade", "MM取引"]]},
+  {key: "admin", label: "管理", pages: [["proposals", "提案"], ["rounds", "回・設定"], ["users", "販売員"], ["audit", "記録"]], adminPages: ["rounds", "users", "audit"]},
+];
+function curHash() {
   const hRaw = (location.hash || "#public").slice(1);
-  const h = hRaw.startsWith("trade-") ? "trade" : hRaw;
+  return hRaw.startsWith("trade-") ? "trade" : hRaw;
+}
+function catPages(cat) {
+  return cat.pages.filter(([p]) => !(cat.adminPages || []).includes(p) || profile?.role === "admin");
+}
+function catOf(h) {
+  return CATS.find(c => c.pages.some(([p]) => p === h)) || null;
+}
+function renderNav() {
+  const h = curHash();
   const link = (hash, label) => `<a href="#${hash}" class="${h === hash ? "on" : ""}">${label}</a>`;
   if (!session) $nav.innerHTML = link("public", "みんなの実績") + link("claim", "自販機で買った方") + link("trade", "MM取引") + link("login", "販売員ログイン");
   else if (!profile || !profile.active) $nav.innerHTML = `<span class="badge">${esc(profile?.username || "")}：有効化まち</span><button class="sub" onclick="logout()">ログアウト</button>`;
-  else $nav.innerHTML = link("app", "ホーム") + link("sell", "売る") + link("lots", "自販機") + link("donations", "寄付") + link("numbers", "番号一覧") + link("winners", "当選・引換") + link("manage", "券の管理") + link("book", "本") + link("proposals", "提案") + link("mm", "MM") + link("trade", "MM取引")
-    + (profile.role === "admin" ? link("rounds", "回・設定") + link("users", "販売員") + link("audit", "記録") : "")
-    + `<span class="badge">${esc(profile.username)}</span><button class="sub" onclick="logout()">ログアウト</button>`;
+  else {
+    const cat = catOf(h);
+    $nav.innerHTML = CATS.map(c => `<a href="#${catPages(c)[0][0]}" class="${cat && cat.key === c.key ? "on" : ""}">${c.label}</a>`).join("")
+      + `<span class="badge">${esc(profile.username)}</span><button class="sub" onclick="logout()">ログアウト</button>`;
+  }
+}
+function renderSubnav() {
+  const el = document.getElementById("subnav");
+  if (!session || !profile || !profile.active) { el.style.display = "none"; el.innerHTML = ""; return; }
+  const h = curHash();
+  const cat = catOf(h);
+  const pages = cat ? catPages(cat) : [];
+  if (!cat || pages.length < 2) { el.style.display = "none"; el.innerHTML = ""; return; }
+  el.style.display = "";
+  el.innerHTML = `<div class="in">${pages.map(([p, label]) => `<a href="#${p}" class="${h === p ? "on" : ""}">${label}</a>`).join("")}</div>`;
 }
 function renderTabbar() {
-  const hRaw = (location.hash || "#public").slice(1);
-  const h = hRaw.startsWith("trade-") ? "trade" : hRaw;
+  const h = curHash();
   const tab = (hash, ic, label) => `<a href="#${hash}" class="${h === hash ? "on" : ""}"><span class="ic">${ic}</span>${label}</a>`;
   const el = document.getElementById("tabbar");
   if (!session) el.innerHTML = tab("public", "", "実績") + tab("claim", "", "自販機") + tab("trade", "", "取引") + tab("login", "", "ログイン");
   else if (!profile || !profile.active) el.innerHTML = tab("public", "", "実績") + tab("claim", "", "自販機");
-  else el.innerHTML = tab("app", "", "ホーム") + tab("sell", "", "売る") + tab("lots", "", "自販機") + tab("winners", "", "当選") + tab("book", "", "本") + tab("proposals", "", "提案") + tab("mm", "", "MM") + tab("more", "", "その他");
+  else {
+    const cat = catOf(h);
+    el.innerHTML = CATS.map(c => `<a href="#${catPages(c)[0][0]}" class="${cat && cat.key === c.key ? "on" : ""}">${c.label}</a>`).join("");
+  }
 }
 async function logout() { await sb.auth.signOut(); session = null; profile = null; location.hash = "#public"; render(); }
 
@@ -1700,7 +1736,7 @@ async function doTradeCancel(id) {
   } catch (e) { viewTrade(esc(e.message), false); }
 }
 
-// ---- その他メニュー（スマホ用） ----
+// ---- その他メニュー（廃止済み: #more は #proposals へリダイレクト。導線からは外して残置） ----
 function viewMore() {
   const item = (hash, label, desc) => `<a href="#${hash}" style="display:block;color:var(--txt);text-decoration:none;padding:14px 4px;border-bottom:1px solid var(--line2)"><b>${label}</b><br><span class="small">${desc}</span></a>`;
   $main.innerHTML = `<div class="card"><h2>その他</h2>
@@ -1719,7 +1755,7 @@ async function render() {
   const rawHash = (location.hash || "#public").slice(1);
   const hash = rawHash.startsWith("trade-") ? "trade" : rawHash;
   tradeFocusId = rawHash.startsWith("trade-") ? rawHash.slice(6) : null;
-  renderNav(); renderTabbar();
+  renderNav(); renderSubnav(); renderTabbar();
   if (!session && !["public", "claim", "login", "register", "trade"].includes(hash)) { location.hash = "#public"; return; }
   if (session && profile && !profile.active && !["public", "claim", "trade"].includes(hash)) {
     $main.innerHTML = `<div class="card"><h2>有効化待ち</h2><p>アカウント「${esc(profile.username)}」は、まだ管理者に有効化されていません。</p></div>`;
@@ -1741,7 +1777,7 @@ async function render() {
     case "proposals": return viewProposals();
     case "mm": return viewMM();
     case "trade": return viewTrade();
-    case "more": return viewMore();
+    case "more": location.hash = "#proposals"; return;
     case "rounds": return profile?.role === "admin" ? viewRounds() : viewApp();
     case "users": return profile?.role === "admin" ? viewUsers() : viewApp();
     case "audit": return profile?.role === "admin" ? viewAudit() : viewApp();
