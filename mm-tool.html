@@ -67,7 +67,7 @@ th{color:var(--sub);font-weight:600}
 
   <div class="card">
     <h2>3. 記録を1件追加する</h2>
-    <p class="hint">チェーンの続きに新しいレコードを付けます（連番とハッシュは自動で計算）。符号の約束: 発行（D→MM）は dia_delta がプラス / mm_delta がマイナス、還元（MM→D）はその逆、在庫操作は実際の増減、棚卸しは差分（実数 − 台帳の在庫）を増減として記録します。追加すると選んだ自販機の在庫にも反映されます。</p>
+    <p class="hint">チェーンの続きに新しいレコードを付けます（連番とハッシュは自動で計算）。符号の約束: 発行（D→MM）は dia_delta がプラス / mm_delta がマイナス、還元（MM→D）はその逆、在庫操作は実際の増減、棚卸しは差分（実数 − 台帳の在庫）を増減として記録します。無効化は dia_delta 0 / mm_delta マイナスで記録し、在庫には反映されません（現物は自販機の外にあるため）。それ以外の種別は、追加すると選んだ自販機の在庫にも反映されます。</p>
     <label class="f">自販機</label><select id="f_machine"></select>
     <div class="row2">
       <div><label class="f">種別</label><select id="f_kind">
@@ -75,6 +75,7 @@ th{color:var(--sub);font-weight:600}
         <option value="redeem">還元（MM→D）</option>
         <option value="stock">在庫操作</option>
         <option value="audit">棚卸し</option>
+        <option value="void">無効化</option>
       </select></div>
       <div><label class="f">プレイヤー（在庫操作なら空でOK）</label><input id="f_player" maxlength="32" placeholder="例: Steve_123"></div>
     </div>
@@ -162,14 +163,17 @@ function splitChain(exchanges) { // チェーン行（chain_seq 昇順）とチ�
   return {chained, prechain};
 }
 function mmSummary(exchanges, machines) { // 本体と同じ集計: 発行/還元/流通/裏付け
-  let issued = 0, redeemed = 0;
+  let issued = 0, redeemed = 0, auditAdj = 0, voided = 0;
   for (const e of exchanges) {
     if (e.kind === "issue") issued += -(e.mm_delta || 0);
     else if (e.kind === "redeem") redeemed += (e.mm_delta || 0);
+    else if (e.kind === "audit") auditAdj += -(e.mm_delta || 0);
+    else if (e.kind === "void") voided += -(e.mm_delta || 0); // 無効化 = 在庫は変えず、流通からだけ引く
   }
-  const circulating = issued - redeemed;
+  const circulating = issued - redeemed + auditAdj - voided;
   const backing = (machines || []).reduce((a, mc) => a + (mc.dia_stock || 0), 0);
-  return {issued, redeemed, circulating, backing, balanced: circulating === backing};
+  // 無効化した分だけ裏付けが余るのが正常なので、backing - circulating === voided を一致とする
+  return {issued, redeemed, circulating, backing, voided, balanced: backing - circulating === voided};
 }
 function nextChainRecord(chained, fields) { // チェーンの続きの1件を作る（fields: machine_id/kind/player/dia_delta/mm_delta/seller/note）
   const tail = chained.length ? chained[chained.length - 1] : null;
@@ -181,7 +185,7 @@ function nextChainRecord(chained, fields) { // チェーンの続きの1件を�
 
 <script>
 // ===== 画面まわり =====
-const KIND_JP = {issue: "発行（D→MM）", redeem: "還元（MM→D）", stock: "在庫操作", audit: "棚卸し"};
+const KIND_JP = {issue: "発行（D→MM）", redeem: "還元（MM→D）", stock: "在庫操作", audit: "棚卸し", void: "無効化"};
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 let ledger = null;
 const $ = id => document.getElementById(id);
@@ -222,8 +226,9 @@ function render() {
     <div class="box"><span>発行した累計</span><b>${s.issued} MM</b></div>
     <div class="box"><span>還元された累計</span><b>${s.redeemed} MM</b></div>
     <div class="box"><span>流通中の MM</span><b>${s.circulating} MM</b></div>
+    <div class="box"><span>無効化ずみ</span><b>${s.voided} MM</b></div>
     <div class="box"><span>裏付けのダイヤ（全自販機）</span><b>${s.backing} D</b></div></div>
-    ${s.balanced ? `<p class="ok">流通中の MM と裏付けダイヤは一致しています</p>` : `<p class="err">流通中の MM（${s.circulating}）と裏付けダイヤ（${s.backing}）が ${Math.abs(s.circulating - s.backing)} ずれています</p>`}`;
+    ${s.balanced ? `<p class="ok">流通中の MM と裏付けダイヤは一致しています${s.voided ? `（無効化ずみ ${s.voided} MM のぶん裏付けが余っています）` : ""}</p>` : `<p class="err">流通中の MM（${s.circulating}）と裏付けダイヤ（${s.backing}）が ${Math.abs(s.backing - s.circulating - s.voided)} ずれています</p>`}`;
   $("machines").innerHTML = ledger.machines.length
     ? `<div class="scroll"><table><tr><th>名前</th><th>場所</th><th>ダイヤ在庫</th><th>MM在庫</th><th>状態</th></tr>${ledger.machines.map(mc => `<tr><td>${esc(mc.name)}</td><td>${esc(mc.location)}</td><td>${mc.dia_stock} D</td><td>${mc.mm_stock} MM</td><td>${mc.active ? "稼働中" : "停止中"}</td></tr>`).join("")}</table></div>`
     : `<p class="hint">自販機がありません。</p>`;
@@ -239,13 +244,15 @@ function addRecord() {
   const mc = ledger.machines.find(x => String(x.id) === mid);
   if (!mc) { $("addmsg").innerHTML = `<div class="err">自販機を選んでください</div>`; return; }
   const dia = parseInt($("f_dia").value, 10), mm = parseInt($("f_mm").value, 10);
+  const kind = $("f_kind").value;
   if (!Number.isInteger(dia) || !Number.isInteger(mm) || (dia === 0 && mm === 0)) { $("addmsg").innerHTML = `<div class="err">増減は整数で入れてください（両方0は不可）</div>`; return; }
-  if ((mc.dia_stock || 0) + dia < 0 || (mc.mm_stock || 0) + mm < 0) { $("addmsg").innerHTML = `<div class="err">在庫がマイナスになってしまいます</div>`; return; }
+  // 無効化は在庫を動かさない（現物は自販機の外にある）ので、在庫の下限チェックと在庫への反映から除外する
+  if (kind !== "void" && ((mc.dia_stock || 0) + dia < 0 || (mc.mm_stock || 0) + mm < 0)) { $("addmsg").innerHTML = `<div class="err">在庫がマイナスになってしまいます</div>`; return; }
   const {chained} = splitChain(ledger.exchanges);
   const numericIds = ledger.exchanges.map(e => e.id).filter(x => typeof x === "number");
   const rec = nextChainRecord(chained, {
     machine_id: mc.id,
-    kind: $("f_kind").value,
+    kind,
     player: $("f_player").value.trim() || null,
     dia_delta: dia,
     mm_delta: mm,
@@ -255,8 +262,10 @@ function addRecord() {
   rec.id = numericIds.length ? Math.max(...numericIds) + 1 : ledger.exchanges.length + 1;
   rec.created_at = new Date().toISOString();
   ledger.exchanges.push(rec);
-  mc.dia_stock = (mc.dia_stock || 0) + dia;
-  mc.mm_stock = (mc.mm_stock || 0) + mm;
+  if (kind !== "void") {
+    mc.dia_stock = (mc.dia_stock || 0) + dia;
+    mc.mm_stock = (mc.mm_stock || 0) + mm;
+  }
   ledger.head_hash = rec.record_hash;
   render();
   $("addmsg").innerHTML = `<div class="ok">追加しました（#${rec.chain_seq} ／ ハッシュ ${esc(rec.record_hash.slice(0, 12))}…）。忘れずに下のボタンから台帳を保存してください</div>`;

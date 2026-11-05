@@ -1065,7 +1065,7 @@ async function doProposalApprove(id) {
 }
 
 // ---- めうまねー (MM) 両替：自販機方式。レートは 1D = 1MM 固定 ----
-const MM_KIND_JP = {issue: "発行（D→MM）", redeem: "還元（MM→D）", stock: "在庫操作", audit: "棚卸し"};
+const MM_KIND_JP = {issue: "発行（D→MM）", redeem: "還元（MM→D）", stock: "在庫操作", audit: "棚卸し", void: "無効化"};
 let mmDir = "issue"; // issue: ダイヤ→MM / redeem: MM→ダイヤ
 let _mmCache = {machines: null, at: 0};
 function invalidateMM() { _mmCache.machines = null; }
@@ -1078,15 +1078,17 @@ async function fetchMachines(force = false) {
 }
 // 集計（単体テスト対象）: exchanges は kind/mm_delta、machines は dia_stock を持つ行の配列
 function mmSummary(exchanges, machines) {
-  let issued = 0, redeemed = 0, auditAdj = 0;
+  let issued = 0, redeemed = 0, auditAdj = 0, voided = 0;
   for (const e of exchanges) {
     if (e.kind === "issue") issued += -(e.mm_delta || 0);       // 発行 = 在庫から出たMM
     else if (e.kind === "redeem") redeemed += (e.mm_delta || 0); // 還元 = 在庫に戻ったMM
     else if (e.kind === "audit") auditAdj += -(e.mm_delta || 0); // 棚卸し差分 = 在庫から出た分は流通側に出たものとして補正
+    else if (e.kind === "void") voided += -(e.mm_delta || 0);    // 無効化 = 在庫は変えず、流通からだけ引く
   }
-  const circulating = issued - redeemed + auditAdj;
+  const circulating = issued - redeemed + auditAdj - voided;
   const backing = (machines || []).reduce((a, mc) => a + (mc.dia_stock || 0), 0);
-  return {issued, redeemed, circulating, backing, balanced: circulating === backing};
+  // 無効化した分だけ裏付けが余るのが正常なので、backing - circulating === voided を一致とする（voided=0 なら従来判定と同一）
+  return {issued, redeemed, circulating, backing, voided, balanced: backing - circulating === voided};
 }
 function mmExchangeCheck(kind, machine, n) { // 両替の事前チェック。エラー文字列 or null
   if (!machine) return "自販機を選んでください";
@@ -1216,8 +1218,9 @@ async function viewMM(m = "", ok = true) {
     <div class="box"><span>発行した累計</span><b>${s.issued} MM</b></div>
     <div class="box"><span>還元された累計</span><b>${s.redeemed} MM</b></div>
     <div class="box"><span>流通中の MM</span><b>${s.circulating} MM</b></div>
+    <div class="box"><span>無効化ずみ</span><b>${s.voided} MM</b></div>
     <div class="box"><span>裏付けのダイヤ（全自販機）</span><b>${s.backing} D</b></div></div>
-    ${s.balanced ? `<p class="ok">流通中の MM と裏付けダイヤは一致しています</p>` : `<p class="err">流通中の MM（${s.circulating}）と裏付けダイヤ（${s.backing}）が ${Math.abs(s.circulating - s.backing)} ずれています。在庫操作の記録を確認してください</p>`}
+    ${s.balanced ? `<p class="ok">流通中の MM と裏付けダイヤは一致しています${s.voided ? `（無効化ずみ ${s.voided} MM のぶん裏付けが余っています）` : ""}</p>` : `<p class="err">流通中の MM（${s.circulating}）と裏付けダイヤ（${s.backing}）が ${Math.abs(s.backing - s.circulating - s.voided)} ずれています。在庫操作の記録を確認してください</p>`}
     <p class="hint">宝くじ売上 (MM): <b>${mmTicketTotal} MM</b>（MM で買われたチケットの合計）</p></div>`;
   if (pa) h += `<div class="card glow"><h3>棚卸しの確認</h3>
     <p><b>${esc(pa.name)}</b> の棚卸しを記録します。</p>
@@ -1242,6 +1245,21 @@ async function viewMM(m = "", ok = true) {
   <label class="f">メモ（任意）</label><input id="mm_op_note" maxlength="200" placeholder="例: 対面で受取">
   <p><button type="button" onclick="doMMOperatorTransfer('deposit')">預かり（現物を受け取る）</button>
   <button type="button" class="sub" onclick="doMMOperatorTransfer('withdraw')">払い戻し（現物を渡す）</button></p></div>`;
+  h += `<div class="card"><h3>MMの無効化</h3>
+  <p class="hint">発行済みの MM を無効化します。どちらも台帳に記録が残り、取り消しはできません。</p>
+  <h4 style="margin:14px 0 6px">プレイヤー残高の無効化</h4>
+  <label class="f">プレイヤーの Minecraft ID</label><input id="mm_vb_player" maxlength="16" placeholder="例: Steve_123">
+  <label class="f">数量 (MM)</label><input id="mm_vb_amount" type="number" min="1" value="10">
+  <label class="f">メモ（理由）</label><input id="mm_vb_note" maxlength="200" placeholder="例: 偽造の疑い">
+  <label class="f">確認者（大口のため確認者が必要：100以上のとき）</label><select id="mm_vb_confirmer" onchange="window._mmVoidBalConfirmer=this.value">${confOpts(window._mmVoidBalConfirmer || "")}</select>
+  <p><button type="button" onclick="doMMVoidBalance()">残高を無効化</button></p>
+  <h4 style="margin:18px 0 6px">現物MMの無効化</h4>
+  <p class="hint">現物は自販機の外にあるため、在庫は変えず、流通量からだけ差し引きます。自販機は帰属の記録用です。</p>
+  <label class="f">自販機（帰属の記録用）</label><select id="mm_vp_machine">${machines.map(mc => `<option value="${mc.id}">${esc(mc.name)}（${esc(mc.location)}）</option>`).join("")}</select>
+  <label class="f">数量 (MM)</label><input id="mm_vp_amount" type="number" min="1" value="10">
+  <label class="f">メモ（理由）</label><input id="mm_vp_note" maxlength="200" placeholder="例: 盗難のため">
+  <label class="f">確認者（大口のため確認者が必要：100以上のとき）</label><select id="mm_vp_confirmer" onchange="window._mmVoidPhysConfirmer=this.value">${confOpts(window._mmVoidPhysConfirmer || "")}</select>
+  <p><button type="button" onclick="doMMVoidPhysical()">現物を無効化として記録</button></p></div>`;
   h += `<div class="card"><h3>本人確認コード</h3>
   <label class="f">対象の Minecraft ID</label><input id="mm_invite_mcid" maxlength="16" placeholder="例: Steve_123" value="${esc(window._mmInviteMcid || "")}" oninput="window._mmInviteMcid=this.value">
   <p><button type="button" onclick="doMMIssueCode()">コードを発行</button></p>
@@ -1428,6 +1446,43 @@ async function doMMOperatorTransfer(kind) { // 運営による預かり / 払い
     viewMM(kind === "deposit" ? `${esc(player)} さんの残高に ${n}MM を預かりました` : `${esc(player)} さんに ${n}MM を払い戻しました`);
   } catch (e) { viewMM(esc(e.message), false); }
 }
+const MM_VOID_ERR_JP = {not_member: "権限がありません", bad_amount: "数量が不正です", not_registered: "そのプレイヤーは登録されていません", insufficient: "残高が足りません"};
+async function doMMVoidBalance() { // プレイヤー残高の無効化 (mm_operator_void RPC: チェーン付き移転で VOID 口座へ送り、残高を減らす)
+  try {
+    const player = (document.getElementById("mm_vb_player")?.value || "").trim();
+    if (!/^[A-Za-z0-9_]{1,16}$/.test(player)) throw new Error("プレイヤーの Minecraft ID を入れてください（半角の英数字と _ 、16文字まで）");
+    const n = parseInt(document.getElementById("mm_vb_amount")?.value, 10);
+    if (!Number.isInteger(n) || n < 1) throw new Error("数量は1以上の整数で入れてください");
+    const reason = (document.getElementById("mm_vb_note")?.value || "").trim();
+    const confirmer = window._mmVoidBalConfirmer || "";
+    const cerr = mmConfirmerCheck(mmNeedsConfirmer(0, n), confirmer, profile.username); if (cerr) throw new Error(cerr);
+    if (!confirm(`${player} さんの残高から ${n}MM を無効化します。取り消しはできません。よろしいですか？`)) return;
+    const note = [reason, confirmer ? `確認:${confirmer}` : ""].filter(Boolean).join(" ");
+    const {data, error} = await sb.rpc("mm_operator_void", {p_mcid: player, p_amount: n, p_note: note});
+    if (error) throw new Error(error.message);
+    if (!data?.ok) throw new Error(MM_VOID_ERR_JP[data?.error] || `エラー: ${data?.error || "不明"}`);
+    await audit("mm_void_balance", `player=${player} amount=${n} note=${note} confirmer=${confirmer || "-"}`);
+    viewMM(`${esc(player)} さんの残高から ${n}MM を無効化しました（残高 ${data.balance} MM）`);
+  } catch (e) { viewMM(esc(e.message), false); }
+}
+async function doMMVoidPhysical() { // 現物MMの無効化 (現物は自販機の外にあるため在庫は変えず、流通量から引く記録だけをチェーンに入れる)
+  try {
+    const mid = parseInt(document.getElementById("mm_vp_machine")?.value, 10);
+    const machines = await fetchMachines(true);
+    const mc = machines.find(x => x.id === mid);
+    if (!mc) throw new Error("自販機を選んでください");
+    const n = parseInt(document.getElementById("mm_vp_amount")?.value, 10);
+    if (!Number.isInteger(n) || n < 1) throw new Error("数量は1以上の整数で入れてください");
+    const reason = (document.getElementById("mm_vp_note")?.value || "").trim();
+    const confirmer = window._mmVoidPhysConfirmer || "";
+    const cerr = mmConfirmerCheck(mmNeedsConfirmer(0, -n), confirmer, profile.username); if (cerr) throw new Error(cerr);
+    if (!confirm(`現物MM ${n}MM を無効化として記録します（帰属: ${mc.name}）。在庫は変わらず、流通量から差し引かれます。取り消しはできません。よろしいですか？`)) return;
+    const note = ["現物MMの無効化", reason, confirmer ? `確認:${confirmer}` : ""].filter(Boolean).join(" ");
+    await insertMMExchange(mc, "void", null, 0, -n, note); // applyMMExchange は在庫も更新してしまうので使わない
+    await audit("mm_void_physical", `machine=${mc.id} amount=${n} note=${note} confirmer=${confirmer || "-"}`);
+    viewMM(`現物MM ${n}MM を無効化として記録しました（流通量から差し引かれます）`);
+  } catch (e) { viewMM(esc(e.message), false); }
+}
 async function doMMPublicUpdate() { // 公開ページ用のスナップショット (mm_public id=1) を更新する
   try {
     const st = window._mmState;
@@ -1467,7 +1522,7 @@ const MMT_ERR_JP = {
   not_member: "権限がありません",
   bad_code: "本人確認コードが違います"
 };
-const MMT_KIND_JP = {send: "送金", trade: "取引", deposit: "預かり", withdraw: "払い戻し"};
+const MMT_KIND_JP = {send: "送金", trade: "取引", deposit: "預かり", withdraw: "払い戻し", void: "無効化"};
 let tradePlayer = null;      // ログイン中だけ {mcid, pin} を保持する (PIN はメモリのみ)
 let tradeFocusId = null;     // #trade-<uuid> で開いたときの対象出品
 let tradeSideFilter = "all"; // 掲示板の絞り込み: all | sell | buy
@@ -1624,7 +1679,9 @@ async function viewTrade(m = "", ok = true) {
     if (!mine.length) h += `<p class="hint">まだありません。</p>`;
     else h += `<div class="scroll"><table><tr><th>時刻</th><th>種別</th><th>相手</th><th>金額</th><th>メモ</th></tr>${mine.map(t => {
       const inTx = t.to_player === me.mcid;
-      const other = t.from_player === "OPERATOR" || t.to_player === "OPERATOR" ? "運営" : (inTx ? t.from_player : t.to_player);
+      const other = t.from_player === "OPERATOR" || t.to_player === "OPERATOR" ? "運営"
+        : t.from_player === "VOID" || t.to_player === "VOID" ? "無効化"
+        : (inTx ? t.from_player : t.to_player);
       return `<tr><td>${fmtTime(t.created_at)}</td><td>${MMT_KIND_JP[t.kind] || esc(t.kind)}</td><td>${esc(other)}</td><td>${inTx ? "+" : "-"}${t.amount} MM</td><td>${esc(t.note)}</td></tr>`;
     }).join("")}</table></div>`;
   }
