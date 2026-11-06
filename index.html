@@ -171,10 +171,10 @@ async function fetchTickets(roundId, force = false) {
   const {data, error} = await sb.from("tickets").select("*").eq("round_id", roundId).order("id"); if (error) throw error;
   _cache.tickets[roundId] = {data, at: Date.now()}; return data;
 }
-function payBreakdown(tickets) { // 有効な券の実売上を通貨別に集計（pay_currency が無い行はダイヤ扱い）
-  let d = 0, mm = 0;
-  for (const t of tickets) { if (t.status !== "valid") continue; if (t.pay_currency === "MM") mm += t.amount_paid || 0; else d += t.amount_paid || 0; }
-  return {d, mm};
+function payBreakdown(tickets) { // 有効な券の実売上を支払い方法別に集計（pay_currency が 'CARD' の行はカード払い、それ以外はダイヤ扱い）
+  let d = 0, card = 0;
+  for (const t of tickets) { if (t.status !== "valid") continue; if (t.pay_currency === "CARD") card += t.amount_paid || 0; else d += t.amount_paid || 0; }
+  return {d, card};
 }
 function statsFromTickets(tickets) {
   const counts = {};
@@ -203,7 +203,7 @@ const CATS = [
   {key: "home", label: "ホーム", pages: [["app", "ホーム"]]},
   {key: "sales", label: "販売", pages: [["sell", "売る"], ["lots", "自販機"], ["donations", "寄付"], ["manage", "券の管理"]]},
   {key: "result", label: "結果", pages: [["numbers", "番号一覧"], ["winners", "当選・引換"], ["book", "本"]]},
-  {key: "mm", label: "MM", pages: [["mm", "MM"], ["trade", "ウォレット"]]},
+  {key: "card", label: "カード", pages: [["trade", "ウォレット"], ["mm", "カード管理"]]},
   {key: "admin", label: "管理", pages: [["rounds", "回・設定"], ["users", "販売員"], ["audit", "記録"]], adminPages: ["rounds", "users", "audit"]},
 ];
 function curHash() {
@@ -253,19 +253,8 @@ async function logout() { await sb.auth.signOut(); session = null; profile = nul
 // 公開ページ（名前は出ません）
 async function viewPublic() {
   $main.innerHTML = "<p>読み込み中…</p>";
-  let mmPub = null;
-  try { const {data} = await sb.from("mm_public").select("*").eq("id", 1).maybeSingle(); mmPub = data || null; } catch { mmPub = null; }
-  const mmSection = mmPub ? `<div class="card"><h3>めうまねー (MM)</h3>
-  <p class="hint">節電鯖の独自通貨です。1MM = ダイヤ1個で、いつでも両替できます。台帳はハッシュチェーンで記録されていて、後から書き換えると検出できます。</p>
-  <div class="kpi">
-    <div class="box"><span>流通中の MM</span><b>${mmPub.circulating} MM</b></div>
-    <div class="box"><span>裏付けのダイヤ（全自販機）</span><b>${mmPub.dia_total} D</b></div>
-    <div class="box"><span>台帳チェーン</span><b>${mmPub.chain_count} 件</b></div>
-    <div class="box"><span>先端ハッシュ</span><b style="font-size:13px">${esc((mmPub.head_hash || "").slice(0, 16))}…</b></div>
-    <div class="box"><span>この情報の更新</span><b style="font-size:13px">${fmtTime(mmPub.updated_at)}</b></div>
-  </div></div>` : "";
   const {data: rounds} = await sb.from("public_rounds").select("*").order("id", {ascending: false});
-  if (!rounds || !rounds.length) { $main.innerHTML = `<div class="card"><h2>宝くじ</h2><p>まだ始まっていません。まだ始まっていません。</p></div>` + mmSection; return; }
+  if (!rounds || !rounds.length) { $main.innerHTML = `<div class="card"><h2>宝くじ</h2><p>まだ始まっていません。まだ始まっていません。</p></div>`; return; }
   const rnd = currentRound && rounds.find(r => r.id === currentRound) || rounds[0];
   currentRound = rnd.id;
   const {data: stats} = await sb.from("public_number_stats").select("*").eq("round_id", rnd.id);
@@ -290,7 +279,6 @@ async function viewPublic() {
     return `<div class="${cls}"><div class="num">${n}</div><div>${cnt} 枚</div><div class="small">${label}</div></div>`;
   }).join("");
   h += `<div class="card"><h3>番号ごとの売れ行き</h3><p class="hint">買った人の名前は公開されません。配当は「集まった金額 ÷ 当選番号の数 ÷ その番号を買った枚数」で決まります。</p><div class="grid">${cells}</div></div>`;
-  h += mmSection;
   $main.innerHTML = h;
 }
 
@@ -389,7 +377,7 @@ async function viewApp(m = "", ok = true) {
     <div class="box"><span>状態</span><b>${STATUS_JP[rnd.status] || esc(rnd.status)}</b></div>
     <div class="box"><span>売れた枚数</span><b>${total} 枚</b></div>
     <div class="box"><span>集まった金額</span><b>${total * rnd.price} D</b></div>
-    <div class="box"><span>売上の内訳（実際に払われた分）</span><b>ダイヤ ${payBreakdown(tickets).d} / MM ${payBreakdown(tickets).mm}</b></div>
+    <div class="box"><span>売上の内訳（実際に払われた分）</span><b>ダイヤ ${payBreakdown(tickets).d} D / カード ${payBreakdown(tickets).card} D</b></div>
     <div class="box"><span>当選番号1つ分の配当のもと</span><b>${poolPerNumber(total, rnd.price, rnd.win_count, rnd.payout_rate)} D</b></div>
     <div class="box"><span>自販機ロット</span><b>在庫 ${stocked} / 登録ずみ ${claimed}</b></div>
     <div class="box"><span>寄付の合計</span><b>${donSum.db} DB</b></div>
@@ -403,7 +391,7 @@ async function viewApp(m = "", ok = true) {
 // ---- 売る（タップで番号えらび） ----
 let sellSel = {};        // {番号: 口数}
 let sellSource = "face"; // face/sponsor/donation
-let sellCurrency = "D";  // D / MM（1D = 1MM なので金額は同じ）
+let sellCurrency = "D";  // D / CARD（カード払いは買い手のカードへ請求する。金額はどちらも D 建て）
 let sellCounts = {};     // 既に売れた枚数（表示用）
 function sellTotal() { return Object.values(sellSel).reduce((a, b) => a + b, 0); }
 function sellSummary(rnd) {
@@ -432,8 +420,8 @@ async function viewSell(m = "", ok = true) {
   <label class="f">② 売り方</label>
   <div class="seg">${seg("face", "ふつうに売る")}${seg("sponsor", "スポンサー券")}${seg("donation", "寄付の引換で渡す")}</div>
   ${sellSource === "donation" ? `<label class="f">どの寄付の引換ですか</label><select id="s_donation"><option value="">選んでください</option>${avail.map(d => `<option value="${d.id}">${esc(d.donor)}（あと ${d.tickets_entitled - d.tickets_issued} 枚わたせる）</option>`).join("")}</select>` : ""}
-  <label class="f">支払う通貨（1D = 1MM）</label>
-  <div class="seg"><button type="button" class="${sellCurrency === "D" ? "on" : ""}" onclick="sellCurrency='D';viewSell()">ダイヤ</button><button type="button" class="${sellCurrency === "MM" ? "on" : ""}" onclick="sellCurrency='MM';viewSell()">MM（めうまねー）</button></div>
+  <label class="f">支払う方法</label>
+  <div class="seg"><button type="button" class="${sellCurrency === "D" ? "on" : ""}" onclick="sellCurrency='D';viewSell()">ダイヤ</button><button type="button" class="${sellCurrency === "CARD" ? "on" : ""}" onclick="sellCurrency='CARD';viewSell()">カード</button></div>
   <label class="f">③ 番号をタップで選ぶ</label>
   <div class="seg">
     <button type="button" id="mode_add" class="${sellMode === "add" ? "on" : ""}" onclick="setSellMode('add')">＋ ふやすモード</button>
@@ -465,7 +453,7 @@ function sellChipsHtml() {
 }
 function barSumHtml() {
   const total = sellTotal();
-  return total ? `合計 <b>${total} 枚</b>・目安 <b>${total * (window._sellPrice || 10)} ${sellCurrency === "MM" ? "MM" : "D"}</b>` : "番号を選んでください";
+  return total ? `合計 <b>${total} 枚</b>・目安 <b>${total * (window._sellPrice || 10)} D</b>${sellCurrency === "CARD" ? "（カード払い）" : ""}` : "番号を選んでください";
 }
 function sellSummaryHtml() {
   const {list, total} = sellSummary(null);
@@ -526,12 +514,27 @@ async function doSell() {
     else if (sellSource === "sponsor") amountEach = 45;
     else if (document.getElementById("s_staff").checked && rnd.staff_discount) amountEach = rnd.price - Math.floor(rnd.price / 10);
     const rows = numbers.map(n => ({round_id: rnd.id, buyer, number: n, seller: profile.username, source: sellSource, donation_id: don?.id || null, is_donation_benefit: benefit, amount_paid: amountEach, pay_currency: sellCurrency}));
-    const {error} = await sb.from("tickets").insert(rows); if (error) throw error;
+    // カード払いは、先に買い手のカードへ請求し、成功したら券を登録する。請求が失敗したら券は登録しない。
+    // 請求だけ成功して券の登録が失敗した場合は自動補償しない（運営が cc_tx の adjust で取り消す運用。SPEC_CC.md 参照）。
+    let chargedTotal = 0;
+    if (sellCurrency === "CARD" && amountEach * numbers.length > 0) {
+      chargedTotal = amountEach * numbers.length;
+      const res = await mmRpc("cc_charge_by_seller", {p_buyer: buyer, p_amount: chargedTotal, p_counterparty: "宝くじ", p_note: `${rnd.name} 宝くじ購入`});
+      if (!res?.ok) throw new Error(ccErrText(res?.error));
+    }
+    const {error} = await sb.from("tickets").insert(rows);
+    if (error) {
+      if (chargedTotal) {
+        await audit("sell_card_charge_orphan", `round=${rnd.id} buyer=${buyer} amount=${chargedTotal} error=${error.message}`);
+        return viewSell(`カードへの請求（${chargedTotal}D）は完了しましたが、券の登録に失敗しました。券は登録されていません。運営はカードの記録を確認し、調整（adjust）で請求を取り消してください。（${esc(error.message)}）`, false);
+      }
+      throw error;
+    }
     if (don) { const {error: e2} = await sb.from("donations").update({tickets_issued: don.tickets_issued + numbers.length}).eq("id", don.id); if (e2) throw e2; }
     await audit("sell", `round=${rnd.id} buyer=${buyer} numbers=${numbers} source=${sellSource} currency=${sellCurrency}`);
     const doneTotal = numbers.length, doneList = numbers.join(", ");
     sellSel = {}; window._sellBuyer = "";
-    viewSell(`${esc(buyer)} さんに ${doneTotal} 枚売りました（番号: ${doneList}／金額の目安 ${amountEach * doneTotal}${sellCurrency === "MM" ? "MM" : "D"}）<br><a href="#book" onclick="window._bookKind='ticket';window._bookBuyer='${esc(buyer)}'">この人の「券の本」用テキストを作る</a>`);
+    viewSell(`${esc(buyer)} さんに ${doneTotal} 枚売りました（番号: ${doneList}／金額の目安 ${amountEach * doneTotal}D${sellCurrency === "CARD" ? "・カード払い" : ""}）<br><a href="#book" onclick="window._bookKind='ticket';window._bookBuyer='${esc(buyer)}'">この人の「券の本」用テキストを作る</a>`);
   } catch (e) { viewSell(esc(e.message), false); }
 }
 
@@ -667,13 +670,13 @@ async function viewWinners(m = "", ok = true) {
   const grossSum = Object.values(winners).reduce((a, w) => a + w.gross, 0);
   const rows = Object.entries(winners).sort((a, b) => b[1].gross - a[1].gross).map(([buyer, w]) => {
     const fee = redemptionFee(w.gross, w.isSponsor, todayISO(), rnd);
-    const feeTxt = fee === null ? "期限を過ぎています（要相談）" : (fee === 0 ? `手数料なし → ${w.gross}D（=${w.gross}MM）渡す` : `手数料 ${fee}D → ${w.gross - fee}D（=${w.gross - fee}MM）渡す`);
+    const feeTxt = fee === null ? "期限を過ぎています（要相談）" : (fee === 0 ? `手数料なし → ${w.gross}D 渡す` : `手数料 ${fee}D → ${w.gross - fee}D 渡す`);
     const state = redeemedBuyers.has(buyer) ? "渡した" : `<button onclick="doRedeem('${esc(buyer)}')">渡したことにする</button>`;
-    return `<tr><td>${esc(buyer)}</td><td>${w.winTickets.join(", ")}</td><td>${w.gross}D（=${w.gross}MM）</td><td>${w.isSponsor ? "寄付・スポンサー" : "ふつう"}</td><td>${feeTxt}</td><td>${state}</td></tr>`;
+    return `<tr><td>${esc(buyer)}</td><td>${w.winTickets.join(", ")}</td><td>${w.gross}D</td><td>${w.isSponsor ? "寄付・スポンサー" : "ふつう"}</td><td>${feeTxt}</td><td>${state}</td></tr>`;
   }).join("");
   h += `<div class="card"><h3>当選した人</h3><p class="hint">渡せる期間: 手数料なしは ${esc(rnd.redeem_free_until || "未設定")} まで ／ 手数料1割で ${esc(rnd.redeem_ext_until || "未設定")} まで ／ 寄付・スポンサーは ${esc(rnd.sponsor_redeem_until || "未設定")} まで手数料なし。渡すときは券の提示を受けること。</p><div class="scroll"><table><tr><th>当選した人</th><th>当たった番号</th><th>配当</th><th>区分</th><th>今日渡す場合</th><th>引換</th></tr>${rows}</table></div></div>`;
-  h += `<div class="card"><h3>お金の内訳</h3><p>配当のもと（集まった金額 × ${rnd.payout_rate}%）: ${fund}D（=${fund}MM）／ 当選した人へ合計: ${grossSum}D（=${grossSum}MM）／ <b>余った ${fund - grossSum}D（=${fund - grossSum}MM）は Gate07 へ寄付</b></p><button class="sub" onclick="window._bookKind='winners';location.hash='#book'">当選発表の本を作る</button></div>`;
-  if (reds && reds.length) h += `<div class="card"><h3>渡した記録</h3><div class="scroll"><table><tr><th>当選した人</th><th>配当</th><th>手数料</th><th>渡した額</th><th>担当</th></tr>${reds.map(r => `<tr><td>${esc(r.buyer)}</td><td>${r.gross}D（=${r.gross}MM）</td><td>${r.fee}D</td><td>${r.net}D（=${r.net}MM）</td><td>${esc(r.redeemed_by)}</td></tr>`).join("")}</table></div></div>`;
+  h += `<div class="card"><h3>お金の内訳</h3><p>配当のもと（集まった金額 × ${rnd.payout_rate}%）: ${fund}D ／ 当選した人へ合計: ${grossSum}D ／ <b>余った ${fund - grossSum}D は Gate07 へ寄付</b></p><button class="sub" onclick="window._bookKind='winners';location.hash='#book'">当選発表の本を作る</button></div>`;
+  if (reds && reds.length) h += `<div class="card"><h3>渡した記録</h3><div class="scroll"><table><tr><th>当選した人</th><th>配当</th><th>手数料</th><th>渡した額</th><th>担当</th></tr>${reds.map(r => `<tr><td>${esc(r.buyer)}</td><td>${r.gross}D</td><td>${r.fee}D</td><td>${r.net}D</td><td>${esc(r.redeemed_by)}</td></tr>`).join("")}</table></div></div>`;
   $main.innerHTML = h;
 }
 async function doDraw() {
@@ -717,7 +720,7 @@ async function doRedeem(buyer) {
     const {error} = await sb.from("redemptions").insert({round_id: rnd.id, buyer, gross: w.gross, fee, net: w.gross - fee, redeemed_by: profile.username, note});
     if (error) throw error;
     await audit("redeem", `buyer=${buyer} gross=${w.gross} fee=${fee} ${note}`);
-    viewWinners(`${esc(buyer)} さんへ ${w.gross - fee}D（=${w.gross - fee}MM）渡したことにしました（手数料 ${fee}D）`);
+    viewWinners(`${esc(buyer)} さんへ ${w.gross - fee}D 渡したことにしました（手数料 ${fee}D）`);
   } catch (e) { viewWinners(esc(e.message), false); }
 }
 
@@ -1064,7 +1067,7 @@ async function doProposalApprove(id) {
   }
 }
 
-// ---- めうまねー (MM) 両替：自販機方式。レートは 1D = 1MM 固定 ----
+// ---- 旧 MM 台帳の純粋ロジック（MM は廃止。過去データの保全とフルバックアップのチェーン検証用に残置） ----
 const MM_KIND_JP = {issue: "発行（D→MM）", redeem: "還元（MM→D）", stock: "在庫操作", audit: "棚卸し", void: "無効化"};
 let mmDir = "issue"; // issue: ダイヤ→MM / redeem: MM→ダイヤ
 let _mmCache = {machines: null, at: 0};
@@ -1178,91 +1181,62 @@ async function insertMMExchange(mc, kind, player, diaDelta, mmDelta, note) { // 
     if (!(error.code === "23505" || /duplicate|unique/i.test(error.message || "")) || attempt === 1) throw error; // 連番が競合したら再取得して1回だけ再試行
   }
 }
-async function viewMM(m = "", ok = true) {
-  let machines = [], hist = [], mmTicketTotal = 0, s = mmSummary([], []), chainRes = null, preCount = 0, members = [], myCodes = [];
+// ---- クレジットカード (CC) ----
+// カード払いすると相手には即入金され (運営が立て替え)、使った分は利用者の借入になる。
+// 締めは月次 (利用月 = period)、支払期限は翌月10日。期限を過ぎて未払いがあると新規利用は DB 側で自動停止される。
+// 精算はダイヤを運営に渡し、販売員が記録する。利息・手数料なし。発行は本人確認ずみのプレイヤーのみ。
+const CC_ERR_JP = {
+  no_card: "カードが発行されていません",
+  card_suspended: "カードは停止中です",
+  card_revoked: "カードは解約済みです",
+  overdue: "支払期限を過ぎた未払いがあるため利用できません",
+  over_limit: "利用限度額を超えています",
+  over_repay: "利用残高を超える精算はできません",
+  not_verified: "本人確認が済んでいません",
+  not_member: "権限がありません",
+  bad_amount: "金額が不正です",
+  not_registered: "そのプレイヤーは登録されていません",
+  bad_input: "入力が違います",
+  self_send: "自分には送れません",
+  not_open: "もう終わった取引です",
+  own_offer: "自分の出品です"
+};
+function ccErrText(code) { return CC_ERR_JP[code] || MMT_ERR_JP[code] || `エラーが発生しました (${code || "不明"})`; }
+const CC_KIND_JP = {charge: "利用", repay: "精算", adjust: "調整"};
+const CC_STATUS_JP = {active: "利用可", suspended: "停止", revoked: "解約"};
+const CC_USABLE_JP = {overdue: "支払期限を過ぎた未払いがあるため利用できません", card_suspended: "カードは停止中です", card_revoked: "カードは解約済みです", no_card: "カードが発行されていません"};
+async function viewCard(m = "", ok = true) {
+  let cards = [], myCodes = [];
   try {
-    machines = await fetchMachines();
-    const [chainData, histRes, tkRes, memRes, codeRes] = await Promise.all([
-      fetchMMChain(),
-      sb.from("mm_exchanges").select("*").order("created_at", {ascending: false}).limit(30),
-      sb.from("tickets").select("amount_paid").eq("pay_currency", "MM").eq("status", "valid"),
-      sb.from("profiles").select("username").eq("active", true).order("username"),
-      sb.rpc("mm_my_codes")
-    ]);
-    s = mmSummary([...chainData.prechain, ...chainData.chained], machines);
-    preCount = chainData.prechain.length;
-    chainRes = await verifyMMChain(chainData.chained);
-    hist = histRes.data || [];
-    mmTicketTotal = (tkRes.data || []).reduce((a, t) => a + (t.amount_paid || 0), 0);
-    members = (memRes.data || []).map(p => p.username).filter(u => u !== profile.username);
-    myCodes = codeRes.data?.ok ? (codeRes.data.codes || []) : [];
-    const chained = chainData.chained;
-    window._mmState = {
-      circulating: s.circulating, diaTotal: s.backing,
-      mmStockTotal: machines.reduce((a, mc) => a + (mc.mm_stock || 0), 0),
-      chainCount: chainRes ? chainRes.count : chained.length,
-      headHash: chained.length ? chained[chained.length - 1].record_hash : "",
-      verifyText: chainRes && chainRes.ok ? `検証OK（チェーン ${chainRes.count} 件を全件再計算）` : `チェーン異常${chainRes ? `（#${chainRes.atSeq}: ${chainRes.why || "不一致"}）` : ""}`
-    };
+    const [listRes, codeRes] = await Promise.all([mmRpc("cc_list_cards", {}), mmRpc("mm_my_codes", {})]);
+    if (!listRes?.ok) throw new Error(ccErrText(listRes?.error));
+    cards = listRes.cards || [];
+    myCodes = codeRes?.ok ? (codeRes.codes || []) : [];
   } catch (e) {
-    $main.innerHTML = msg(m, ok) + `<div class="card"><h2>めうまねー (MM)</h2><p class="err">読み込めませんでした: ${esc(e.message)}</p><p class="hint">両替用のテーブル (mm_machines / mm_exchanges) がまだ用意されていない可能性があります。</p></div>`;
+    $main.innerHTML = msg(m, ok) + `<div class="card"><h2>カード管理</h2><p class="err">読み込めませんでした: ${esc(e.message)}</p></div>`;
     return;
   }
-  const mName = id => esc((machines.find(x => x.id === id) || {}).name || `#${id}`);
-  const confOpts = sel => `<option value="">（選んでください）</option>` + members.map(u => `<option value="${esc(u)}" ${u === sel ? "selected" : ""}>${esc(u)}</option>`).join("");
-  const activeMachines = machines.filter(mc => mc.active);
   const inviteStatus = c => c.status === "used" ? "使用ずみ" : (c.status === "expired" || new Date(c.expires_at) <= new Date()) ? "期限切れ" : "未使用";
-  const pa = window._mmAudit || null;
-  let h = msg(m, ok) + `<h2>めうまねー (MM)</h2>
-  <div class="card"><h3>全体のようす（レート 1D = 1MM）</h3><div class="kpi">
-    <div class="box"><span>発行した累計</span><b>${s.issued} MM</b></div>
-    <div class="box"><span>還元された累計</span><b>${s.redeemed} MM</b></div>
-    <div class="box"><span>流通中の MM</span><b>${s.circulating} MM</b></div>
-    <div class="box"><span>無効化ずみ</span><b>${s.voided} MM</b></div>
-    <div class="box"><span>裏付けのダイヤ（全自販機）</span><b>${s.backing} D</b></div></div>
-    ${s.balanced ? `<p class="ok">流通中の MM と裏付けダイヤは一致しています${s.voided ? `（無効化ずみ ${s.voided} MM のぶん裏付けが余っています）` : ""}</p>` : `<p class="err">流通中の MM（${s.circulating}）と裏付けダイヤ（${s.backing}）が ${Math.abs(s.backing - s.circulating - s.voided)} ずれています。在庫操作の記録を確認してください</p>`}
-    <p class="hint">宝くじ売上 (MM): <b>${mmTicketTotal} MM</b>（MM で買われたチケットの合計）</p></div>`;
-  if (pa) h += `<div class="card glow"><h3>棚卸しの確認</h3>
-    <p><b>${esc(pa.name)}</b> の棚卸しを記録します。</p>
-    <p>台帳の在庫: ダイヤ ${pa.diaStock} D ／ MM ${pa.mmStock} MM<br>実物カウント: ダイヤ ${pa.actualDia} D ／ MM ${pa.actualMm} MM</p>
-    <p>差分: ダイヤ <b>${fmtDelta(pa.diaDelta, "D")}</b> ／ MM <b>${fmtDelta(pa.mmDelta, "MM")}</b> をチェーンに記録し、在庫を実数に合わせます。</p>
-    ${pa.witness ? `<p class="hint">立会人: ${esc(pa.witness)}</p>` : ""}${pa.confirmer ? `<p class="hint">確認者: ${esc(pa.confirmer)}</p>` : ""}
-    <p><button type="button" onclick="doMMAuditExecute()">この内容で記録する</button> <button type="button" class="sub" onclick="window._mmAudit=null;viewMM()">やめる</button></p></div>`;
-  h += `<div class="card"><h3>台帳チェーン（改ざん検知）</h3>
-    ${chainRes && chainRes.ok ? `<p class="ok">検証OK（チェーン ${chainRes.count} 件${chainRes.count ? ` ／ 先端ハッシュ ${esc(chainRes.head.slice(0, 12))}…` : ""}）</p>` : `<p class="err">チェーンが壊れています${chainRes ? `（#${chainRes.atSeq}: ${esc(chainRes.why || "不一致")}）` : ""}。台帳が書き換えられた可能性があります</p>`}
-    ${preCount ? `<p class="hint">チェーン開始前の履歴が ${preCount} 件あります（ハッシュ検証の対象外です）</p>` : ""}
-    <p><button type="button" class="sub" onclick="exportMMLedger()">台帳をエクスポート (JSON)</button></p>
-    <p class="hint">このシステムが使えなくなっても、エクスポートした JSON と引き継ぎ用ツール（mm-tool.html）で台帳を検証して続けることができます</p></div>`;
-  h += `<div class="card"><h3>公開スナップショット</h3>
-    <p class="hint">流通量・裏付けダイヤ・台帳チェーンの先端ハッシュだけを、ログイン前の公開ページに表示できます（プレイヤー名や担当者名は出ません）。数字を確認したら更新してください。</p>
-    <p><button type="button" class="sub" onclick="doMMPublicUpdate()">公開スナップショットを更新</button>
-    <button type="button" class="sub" onclick="doMMCopyPublicText(this)">公開用テキストをコピー</button></p>
-    <p class="hint">公開用テキストは Wiki などに貼って残すためのものです。先端ハッシュを台帳の外に残すと、後から台帳を書き換えても検出できます。</p></div>`;
+  let h = msg(m, ok) + `<h2>カード管理</h2>
+  <div class="card"><h3>カード一覧</h3>`;
+  if (!cards.length) h += `<p class="hint">まだ発行されたカードはありません。</p>`;
+  else h += `<div class="scroll"><table><tr><th>MCID</th><th>限度額</th><th>状態</th><th>利用残高</th><th>延滞額</th><th>次回期限</th></tr>${cards.map(c => `<tr><td>${esc(c.mcid)}</td><td>${c.credit_limit} D</td><td>${CC_STATUS_JP[c.status] || esc(c.status)}</td><td>${c.debt?.total ?? 0} D</td><td>${c.debt?.overdue ?? 0} D</td><td>${c.debt?.next_due ? esc(c.debt.next_due) : "―"}</td></tr>`).join("")}</table></div>`;
+  h += `</div>`;
+  h += `<div class="card"><h3>カードの発行・変更</h3>
+  <p class="hint">発行は本人確認ずみのプレイヤーのみです。限度額の目安は 500D です。</p>
+  <label class="f">プレイヤーの Minecraft ID</label><input id="cc_mcid" maxlength="16" placeholder="例: Steve_123">
+  <label class="f">利用限度額 (D)</label><input id="cc_limit" type="number" min="0" value="500">
+  <label class="f">状態</label><select id="cc_status"><option value="active">利用可</option><option value="suspended">停止</option><option value="revoked">解約</option></select>
+  <p><button type="button" onclick="doCCAdminCard()">発行・変更する</button></p></div>`;
+  h += `<div class="card"><h3>精算の受付</h3>
+  <p class="hint">ダイヤを受け取ったら、その金額を記録してください。精算は古い利用月から順に充てられます。</p>
+  <label class="f">プレイヤーの Minecraft ID</label><input id="cc_repay_mcid" maxlength="16" placeholder="例: Steve_123">
+  <label class="f">金額 (D)</label><input id="cc_repay_amount" type="number" min="1" value="100">
+  <label class="f">メモ（任意）</label><input id="cc_repay_note" maxlength="200" placeholder="例: 対面で受取">
+  <p><button type="button" onclick="doCCRepay()">精算を記録する</button></p></div>`;
   if (profile.role === "admin") h += `<div class="card"><h3>フルバックアップ（管理者）</h3>
     <p class="hint">プレイヤーの暗証番号ハッシュを含む全データを JSON で保存します。取り扱いに注意してください。ダウンロードの前に、送金チェーンと台帳チェーンを全件再計算して検証します。復元は restore.html で復元用 SQL を作って行います。</p>
     <p><button type="button" class="sub" onclick="doMMBackup()">フルバックアップをダウンロード</button></p></div>`;
-  h += `<div class="card"><h3>プレイヤー残高への預かり / 払い戻し</h3>
-  <p class="hint">プレイヤーから現物の MM を受け取ったら「預かり」（残高が増えます）、残高ぶんの現物 MM を渡したら「払い戻し」（残高が減ります）。記録は送金台帳（公開）に残ります。</p>
-  <label class="f">プレイヤーの Minecraft ID</label><input id="mm_op_player" maxlength="16" placeholder="例: Steve_123">
-  <label class="f">金額 (MM)</label><input id="mm_op_amount" type="number" min="1" value="10">
-  <label class="f">メモ（任意）</label><input id="mm_op_note" maxlength="200" placeholder="例: 対面で受取">
-  <p><button type="button" onclick="doMMOperatorTransfer('deposit')">預かり（現物を受け取る）</button>
-  <button type="button" class="sub" onclick="doMMOperatorTransfer('withdraw')">払い戻し（現物を渡す）</button></p></div>`;
-  h += `<div class="card"><h3>MMの無効化</h3>
-  <p class="hint">発行済みの MM を無効化します。どちらも台帳に記録が残り、取り消しはできません。</p>
-  <h4 style="margin:14px 0 6px">プレイヤー残高の無効化</h4>
-  <label class="f">プレイヤーの Minecraft ID</label><input id="mm_vb_player" maxlength="16" placeholder="例: Steve_123">
-  <label class="f">数量 (MM)</label><input id="mm_vb_amount" type="number" min="1" value="10">
-  <label class="f">メモ（理由）</label><input id="mm_vb_note" maxlength="200" placeholder="例: 偽造の疑い">
-  <label class="f">確認者（大口のため確認者が必要：100以上のとき）</label><select id="mm_vb_confirmer" onchange="window._mmVoidBalConfirmer=this.value">${confOpts(window._mmVoidBalConfirmer || "")}</select>
-  <p><button type="button" onclick="doMMVoidBalance()">残高を無効化</button></p>
-  <h4 style="margin:18px 0 6px">現物MMの無効化</h4>
-  <p class="hint">現物は自販機の外にあるため、在庫は変えず、流通量からだけ差し引きます。自販機は帰属の記録用です。</p>
-  <label class="f">自販機（帰属の記録用）</label><select id="mm_vp_machine">${machines.map(mc => `<option value="${mc.id}">${esc(mc.name)}（${esc(mc.location)}）</option>`).join("")}</select>
-  <label class="f">数量 (MM)</label><input id="mm_vp_amount" type="number" min="1" value="10">
-  <label class="f">メモ（理由）</label><input id="mm_vp_note" maxlength="200" placeholder="例: 盗難のため">
-  <label class="f">確認者（大口のため確認者が必要：100以上のとき）</label><select id="mm_vp_confirmer" onchange="window._mmVoidPhysConfirmer=this.value">${confOpts(window._mmVoidPhysConfirmer || "")}</select>
-  <p><button type="button" onclick="doMMVoidPhysical()">現物を無効化として記録</button></p></div>`;
   h += `<div class="card"><h3>本人確認コード</h3>
   <label class="f">対象の Minecraft ID</label><input id="mm_invite_mcid" maxlength="16" placeholder="例: Steve_123" value="${esc(window._mmInviteMcid || "")}" oninput="window._mmInviteMcid=this.value">
   <p><button type="button" onclick="doMMIssueCode()">コードを発行</button></p>
@@ -1274,81 +1248,47 @@ async function viewMM(m = "", ok = true) {
   <h4 style="margin:16px 0 8px">自分が発行したコード</h4>
   ${myCodes.length ? `<div class="scroll"><table><tr><th>MCID</th><th>コード</th><th>状態</th><th>発行日時</th><th>期限</th></tr>${myCodes.map(c => `<tr><td>${esc(c.mcid)}</td><td>${esc(c.code)}</td><td>${inviteStatus(c)}</td><td>${fmtTime(c.created_at)}</td><td>${fmtTime(c.expires_at)}</td></tr>`).join("")}</table></div>` : `<p class="hint">まだありません。</p>`}
   </div>`;
-  h += `<div class="card"><h3>両替する（レート 1D = 1MM）</h3>
-  <label class="f">自販機</label><select id="mm_machine">${activeMachines.map(mc => `<option value="${mc.id}">${esc(mc.name)}（${esc(mc.location)}）… ダイヤ ${mc.dia_stock} / MM ${mc.mm_stock}</option>`).join("")}</select>
-  <label class="f">方向</label>
-  <div class="seg"><button type="button" class="${mmDir === "issue" ? "on" : ""}" onclick="mmDir='issue';viewMM()">ダイヤ → MM（発行）</button><button type="button" class="${mmDir === "redeem" ? "on" : ""}" onclick="mmDir='redeem';viewMM()">MM → ダイヤ（還元）</button></div>
-  <label class="f">プレイヤーの Minecraft ID</label><input id="mm_player" maxlength="32" placeholder="例: Steve_123" value="${esc(window._mmPlayer || "")}" oninput="window._mmPlayer=this.value">
-  <label class="f">個数（${mmDir === "issue" ? "払うダイヤ = もらう MM" : "払う MM = もらうダイヤ"}）</label><input id="mm_amount" type="number" min="1" value="10">
-  <label class="f">確認者（大口のため確認者が必要：100以上のとき）</label><select id="mm_confirmer" onchange="window._mmConfirmer=this.value">${confOpts(window._mmConfirmer || "")}</select>
-  ${activeMachines.length ? `<button class="big" onclick="doMMExchange()">両替する</button>` : `<p class="hint">使える自販機がありません。下の一覧で自販機を用意してください。</p>`}</div>`;
-  h += `<div class="card"><h3>自販機の一覧と在庫操作</h3>
-  <label class="f">在庫操作の確認者（大口のため確認者が必要：100以上のとき）</label><select id="mm_stock_confirmer" onchange="window._mmStockConfirmer=this.value">${confOpts(window._mmStockConfirmer || "")}</select>`;
-  if (!machines.length) h += `<p class="hint">まだ自販機がありません。${profile.role === "admin" ? "下のフォームから追加してください。" : "管理者に追加してもらってください。"}</p>`;
-  else h += machines.map(mc => `<div style="border:1px solid var(--line2);border-radius:12px;padding:12px;margin:10px 0">
-    <div><b>${esc(mc.name)}</b> <span class="small">${esc(mc.location)} ／ ${mc.active ? "稼働中" : "停止中"}</span></div>
-    <div style="margin:6px 0">ダイヤ在庫 <b>${mc.dia_stock}</b> D ／ MM在庫 <b>${mc.mm_stock}</b> MM</div>
-    <div class="stepper"><input id="stk_n_${mc.id}" type="number" min="1" value="10" style="width:90px">
-    <button type="button" class="sub" onclick="doMMStock(${mc.id},'dia_stock',1)">ダイヤ補充</button>
-    <button type="button" class="sub" onclick="doMMStock(${mc.id},'dia_stock',-1)">ダイヤ回収</button>
-    <button type="button" class="sub" onclick="doMMStock(${mc.id},'mm_stock',1)">MM補充</button>
-    <button type="button" class="sub" onclick="doMMStock(${mc.id},'mm_stock',-1)">MM回収</button></div>
-    <div style="margin-top:12px;border-top:1px dashed var(--line2);padding-top:10px">
-    <div class="small" style="margin-bottom:6px">棚卸し（実物を数えて、台帳の在庫と合わせます。差分はチェーンに記録されます）</div>
-    <div class="stepper"><input id="aud_dia_${mc.id}" type="number" min="0" step="1" placeholder="ダイヤ実数" style="width:120px">
-    <input id="aud_mm_${mc.id}" type="number" min="0" step="1" placeholder="MM実数" style="width:120px"></div>
-    <label class="f">立会人（任意）</label><input id="aud_wit_${mc.id}" maxlength="32" placeholder="例: Alex_9">
-    <label class="f">確認者（差分が100以上のとき必須）</label><select id="aud_conf_${mc.id}">${confOpts("")}</select>
-    <p style="margin-top:10px"><button type="button" class="sub" onclick="doMMAuditPrepare(${mc.id})">棚卸しをする</button></p></div></div>`).join("");
-  if (profile.role === "admin") h += `<h3 style="margin-top:18px">自販機を追加（管理者）</h3>
-  <label class="f">名前</label><input id="mm_new_name" placeholder="例: 両替機1号">
-  <label class="f">場所</label><input id="mm_new_loc" placeholder="例: スポーン前、銀行の横 など">
-  <button class="sub" onclick="doMMAddMachine()">追加する</button>`;
-  h += `</div>`;
-  h += `<div class="card"><h3>両替の記録（直近30件）</h3>`;
-  if (!hist.length) h += `<p class="hint">まだありません。</p>`;
-  else h += `<div class="scroll"><table><tr><th>時刻</th><th>自販機</th><th>種別</th><th>プレイヤー</th><th>在庫の増減</th><th>担当</th><th>メモ</th></tr>${hist.map(e => `<tr><td>${fmtTime(e.created_at)}</td><td>${mName(e.machine_id)}</td><td>${MM_KIND_JP[e.kind] || esc(e.kind)}</td><td>${esc(e.player)}</td><td>ダイヤ ${fmtDelta(e.dia_delta, "D")} / MM ${fmtDelta(e.mm_delta, "MM")}</td><td>${esc(e.seller)}</td><td>${esc(e.note)}</td></tr>`).join("")}</table></div>`;
-  h += `</div>`;
+  h += `<p class="hint">旧通貨 MM は廃止しました。過去のデータは保全されています。</p>`;
   $main.innerHTML = h;
 }
-async function applyMMExchange(mc, kind, player, diaDelta, mmDelta, note) { // 記録して在庫を更新する共通処理
-  await insertMMExchange(mc, kind, player, diaDelta, mmDelta, note);
-  const {error: e2} = await sb.from("mm_machines").update({dia_stock: (mc.dia_stock || 0) + diaDelta, mm_stock: (mc.mm_stock || 0) + mmDelta}).eq("id", mc.id);
-  if (e2) throw e2;
-  invalidateMM();
-}
-async function exportMMLedger() { // 台帳全体を JSON でダウンロード（引き継ぎ用）
+async function doCCAdminCard() { // カードの発行・限度額・状態変更 (cc_admin_card RPC)
   try {
-    const machines = await fetchMachines(true);
-    const {chained, prechain} = await fetchMMChain();
-    const payload = {
-      format: "mm-ledger-export-v1",
-      exported_at: new Date().toISOString(),
-      head_hash: chained.length ? chained[chained.length - 1].record_hash : "",
-      machines,
-      exchanges: [...chained, ...prechain]
-    };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], {type: "application/json"});
-    const d = new Date();
-    const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `mm-ledger-${ymd}.json`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-  } catch (e) { alert("エクスポートできませんでした: " + e.message); }
+    const mcid = (document.getElementById("cc_mcid")?.value || "").trim();
+    if (!/^[A-Za-z0-9_]{1,16}$/.test(mcid)) throw new Error("プレイヤーの Minecraft ID を入れてください（半角の英数字と _ 、16文字まで）");
+    const limit = parseInt(document.getElementById("cc_limit")?.value, 10);
+    if (!Number.isInteger(limit) || limit < 0) throw new Error("限度額は0以上の整数で入れてください");
+    const status = document.getElementById("cc_status")?.value || "active";
+    const res = await mmRpc("cc_admin_card", {p_mcid: mcid, p_limit: limit, p_status: status});
+    if (!res?.ok) throw new Error(ccErrText(res?.error));
+    await audit("cc_admin_card", `mcid=${mcid} limit=${limit} status=${status}`);
+    viewCard(`${esc(mcid)} さんのカードを設定しました（限度額 ${limit}D・${CC_STATUS_JP[status] || status}）`);
+  } catch (e) { viewCard(esc(e.message), false); }
+}
+async function doCCRepay() { // 精算の記録 (cc_repay RPC)。ダイヤを受け取った販売員が記録する
+  try {
+    const mcid = (document.getElementById("cc_repay_mcid")?.value || "").trim();
+    if (!/^[A-Za-z0-9_]{1,16}$/.test(mcid)) throw new Error("プレイヤーの Minecraft ID を入れてください（半角の英数字と _ 、16文字まで）");
+    const n = parseInt(document.getElementById("cc_repay_amount")?.value, 10);
+    if (!Number.isInteger(n) || n < 1) throw new Error("金額は1以上の整数で入れてください");
+    const note = (document.getElementById("cc_repay_note")?.value || "").trim();
+    if (!confirm(`${mcid} さんの精算 ${n}D を記録します。ダイヤを受け取ったうえで実行してください。よろしいですか？`)) return;
+    const res = await mmRpc("cc_repay", {p_mcid: mcid, p_amount: n, p_note: note});
+    if (!res?.ok) throw new Error(ccErrText(res?.error));
+    await audit("cc_repay", `mcid=${mcid} amount=${n} note=${note}`);
+    viewCard(`${esc(mcid)} さんの精算 ${n}D を記録しました（利用残高 ${res.debt?.total ?? ""}D）`);
+  } catch (e) { viewCard(esc(e.message), false); }
 }
 async function doMMBackup() { // 管理者用フルバックアップ: 両チェーンを検証してから mm_backup_all の JSON を保存する
   try {
     const [transfers, chainData] = await Promise.all([fetchMMTransfers(), fetchMMChain()]);
     const tRes = await verifyMMTChain(transfers.filter(t => t.chain_seq != null).sort((a, b) => a.chain_seq - b.chain_seq));
-    if (!tRes.ok) return viewMM(`送金チェーンが壊れているためバックアップを止めました（#${tRes.atSeq}: ${tRes.why || "不一致"}）`, false);
+    if (!tRes.ok) return viewCard(`送金チェーンが壊れているためバックアップを止めました（#${tRes.atSeq}: ${tRes.why || "不一致"}）`, false);
     const eRes = await verifyMMChain(chainData.chained);
-    if (!eRes.ok) return viewMM(`台帳チェーンが壊れているためバックアップを止めました（#${eRes.atSeq}: ${eRes.why || "不一致"}）`, false);
+    if (!eRes.ok) return viewCard(`台帳チェーンが壊れているためバックアップを止めました（#${eRes.atSeq}: ${eRes.why || "不一致"}）`, false);
     const res = await mmRpc("mm_backup_all", {});
     if (!res || !res.ok) {
       const code = res && res.error;
-      return viewMM(code === "not_admin" ? "管理者だけがバックアップできます" : `バックアップできませんでした（${code || "不明なエラー"}）`, false);
+      return viewCard(code === "not_admin" ? "管理者だけがバックアップできます" : `バックアップできませんでした（${code || "不明なエラー"}）`, false);
     }
     const blob = new Blob([JSON.stringify(res.backup, null, 2)], {type: "application/json"});
     const d = new Date();
@@ -1359,86 +1299,8 @@ async function doMMBackup() { // 管理者用フルバックアップ: 両チェ
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
     await audit("mm_backup", "フルバックアップをダウンロード");
-    viewMM("フルバックアップをダウンロードしました");
-  } catch (e) { viewMM(esc(e.message), false); }
-}
-async function doMMExchange() {
-  try {
-    const mid = parseInt(document.getElementById("mm_machine").value, 10);
-    const machines = await fetchMachines(true);
-    const mc = machines.find(x => x.id === mid);
-    const player = (window._mmPlayer || document.getElementById("mm_player").value).trim();
-    if (!/^[A-Za-z0-9_]{3,32}$/.test(player)) throw new Error("プレイヤーの Minecraft ID を入れてください（半角の英数字と _ ）");
-    const n = parseInt(document.getElementById("mm_amount").value, 10);
-    const err = mmExchangeCheck(mmDir, mc, n); if (err) throw new Error(err);
-    const diaDelta = mmDir === "issue" ? n : -n;
-    const mmDelta = mmDir === "issue" ? -n : n;
-    const confirmer = window._mmConfirmer || "";
-    const cerr = mmConfirmerCheck(mmNeedsConfirmer(diaDelta, mmDelta), confirmer, profile.username); if (cerr) throw new Error(cerr);
-    const note = (mmDir === "issue" ? "両替: ダイヤ→MM" : "両替: MM→ダイヤ") + (confirmer ? ` 確認:${confirmer}` : "");
-    await applyMMExchange(mc, mmDir, player, diaDelta, mmDelta, note);
-    await audit("mm_exchange", `machine=${mc.id} kind=${mmDir} player=${player} n=${n} confirmer=${confirmer || "-"}`);
-    viewMM(mmDir === "issue" ? `${esc(player)} さん: ${n}D → ${n}MM を渡しました（${esc(mc.name)}）` : `${esc(player)} さん: ${n}MM → ${n}D を渡しました（${esc(mc.name)}）`);
-  } catch (e) { viewMM(esc(e.message), false); }
-}
-async function doMMStock(id, field, sign) {
-  try {
-    const n = parseInt(document.getElementById("stk_n_" + id)?.value, 10);
-    if (!Number.isInteger(n) || n < 1) throw new Error("個数は1以上の整数で入れてください");
-    const machines = await fetchMachines(true);
-    const mc = machines.find(x => x.id === id);
-    const delta = sign * n;
-    const err = mmStockCheck(mc, field, delta); if (err) throw new Error(err);
-    const diaDelta = field === "dia_stock" ? delta : 0, mmDelta = field === "mm_stock" ? delta : 0;
-    const confirmer = window._mmStockConfirmer || "";
-    const cerr = mmConfirmerCheck(mmNeedsConfirmer(diaDelta, mmDelta), confirmer, profile.username); if (cerr) throw new Error(cerr);
-    const label = (field === "dia_stock" ? "ダイヤ" : "MM") + (sign > 0 ? "補充" : "回収");
-    await applyMMExchange(mc, "stock", null, diaDelta, mmDelta, `在庫操作: ${label}` + (confirmer ? ` 確認:${confirmer}` : ""));
-    await audit("mm_stock", `machine=${id} ${label} ${n} confirmer=${confirmer || "-"}`);
-    viewMM(`${esc(mc.name)}: ${label} ${n} しました`);
-  } catch (e) { viewMM(esc(e.message), false); }
-}
-async function doMMAddMachine() {
-  try {
-    const name = document.getElementById("mm_new_name").value.trim();
-    const location = document.getElementById("mm_new_loc").value.trim();
-    if (!name) throw new Error("自販機の名前を入れてください");
-    const {error} = await sb.from("mm_machines").insert({name, location, dia_stock: 0, mm_stock: 0, active: true});
-    if (error) throw error;
-    invalidateMM();
-    await audit("mm_machine_add", `name=${name} location=${location}`);
-    viewMM(`自販機「${esc(name)}」を追加しました。在庫操作からダイヤと MM を入れてください`);
-  } catch (e) { viewMM(esc(e.message), false); }
-}
-async function doMMAuditPrepare(id) { // 棚卸し: 実数を入れて差分を確認画面に出す
-  try {
-    const num = elId => { const v = (document.getElementById(elId)?.value ?? "").trim(); return v === "" ? NaN : Number(v); };
-    const actualDia = num("aud_dia_" + id), actualMm = num("aud_mm_" + id);
-    const witness = (document.getElementById("aud_wit_" + id)?.value || "").trim();
-    const confirmer = document.getElementById("aud_conf_" + id)?.value || "";
-    const machines = await fetchMachines(true);
-    const mc = machines.find(x => x.id === id);
-    const d = mmAuditDiffs(mc, actualDia, actualMm); if (d.error) throw new Error(d.error);
-    const cerr = mmConfirmerCheck(mmNeedsConfirmer(d.diaDelta, d.mmDelta), confirmer, profile.username); if (cerr) throw new Error(cerr);
-    window._mmAudit = {machineId: id, name: mc.name, diaStock: mc.dia_stock || 0, mmStock: mc.mm_stock || 0, actualDia, actualMm, diaDelta: d.diaDelta, mmDelta: d.mmDelta, witness, confirmer};
-    viewMM();
-  } catch (e) { viewMM(esc(e.message), false); }
-}
-async function doMMAuditExecute() { // 棚卸し: 差分をチェーンに記録して在庫を実数に合わせる
-  const p = window._mmAudit;
-  if (!p) return viewMM();
-  try {
-    const machines = await fetchMachines(true);
-    const mc = machines.find(x => x.id === p.machineId);
-    const d = mmAuditDiffs(mc, p.actualDia, p.actualMm); if (d.error) throw new Error(d.error); // 準備後に在庫が動いていたら差分を取り直す
-    let note = `棚卸し 実数D${p.actualDia}/MM${p.actualMm}`;
-    if (p.witness) note += ` 立会:${p.witness}`;
-    if (p.confirmer) note += ` 確認:${p.confirmer}`;
-    await applyMMExchange(mc, "audit", null, d.diaDelta, d.mmDelta, note);
-    await audit("mm_audit", `machine=${mc.id} actual_dia=${p.actualDia} actual_mm=${p.actualMm} diff_dia=${d.diaDelta} diff_mm=${d.mmDelta} witness=${p.witness || "-"} confirmer=${p.confirmer || "-"}`);
-    window._mmAudit = null;
-    viewMM(`${esc(mc.name)} の棚卸しを記録しました（在庫を実数に合わせました）`);
-  } catch (e) { window._mmAudit = null; viewMM(esc(e.message), false); }
+    viewCard("フルバックアップをダウンロードしました");
+  } catch (e) { viewCard(esc(e.message), false); }
 }
 async function doMMIssueCode() { // 対面確認用ワンタイムコードを発行する (mm_issue_code RPC)
   try {
@@ -1449,86 +1311,10 @@ async function doMMIssueCode() { // 対面確認用ワンタイムコードを�
     if (!data?.ok) throw new Error(MMT_ERR_JP[data?.error] || `エラー: ${data?.error || "不明"}`);
     window._mmInviteResult = {mcid, code: data.code, expiresInHours: data.expires_in_hours || 24};
     await audit("mm_invite_issue", `mcid=${mcid}`);
-    viewMM(`本人確認コードを発行しました。ゲーム内で ${esc(mcid)} さん本人に伝えてください`);
-  } catch (e) { viewMM(esc(e.message), false); }
+    viewCard(`本人確認コードを発行しました。ゲーム内で ${esc(mcid)} さん本人に伝えてください`);
+  } catch (e) { viewCard(esc(e.message), false); }
 }
-async function doMMOperatorTransfer(kind) { // 運営による預かり / 払い戻し (mm_operator_transfer RPC)
-  try {
-    const player = (document.getElementById("mm_op_player")?.value || "").trim();
-    if (!/^[A-Za-z0-9_]{1,16}$/.test(player)) throw new Error("プレイヤーの Minecraft ID を入れてください（半角の英数字と _ 、16文字まで）");
-    const n = parseInt(document.getElementById("mm_op_amount")?.value, 10);
-    if (!Number.isInteger(n) || n < 1) throw new Error("金額は1以上の整数で入れてください");
-    const note = (document.getElementById("mm_op_note")?.value || "").trim();
-    const text = kind === "deposit"
-      ? `${player} さんから現物 ${n}MM を受け取り、残高に ${n}MM を入れます。よろしいですか？`
-      : `${player} さんの残高から ${n}MM を減らし、現物 ${n}MM を渡します。よろしいですか？`;
-    if (!confirm(text)) return;
-    const args = kind === "deposit"
-      ? {p_from: "OPERATOR", p_to: player, p_amount: n, p_kind: "deposit", p_note: note}
-      : {p_from: player, p_to: "OPERATOR", p_amount: n, p_kind: "withdraw", p_note: note};
-    const {data, error} = await sb.rpc("mm_operator_transfer", args);
-    if (error) throw new Error(error.message);
-    if (!data?.ok) throw new Error(MMT_ERR_JP[data?.error] || `エラー: ${data?.error || "不明"}`);
-    await audit(kind === "deposit" ? "mm_deposit" : "mm_withdraw", `player=${player} amount=${n} note=${note}`);
-    viewMM(kind === "deposit" ? `${esc(player)} さんの残高に ${n}MM を預かりました` : `${esc(player)} さんに ${n}MM を払い戻しました`);
-  } catch (e) { viewMM(esc(e.message), false); }
-}
-const MM_VOID_ERR_JP = {not_member: "権限がありません", bad_amount: "数量が不正です", not_registered: "そのプレイヤーは登録されていません", insufficient: "残高が足りません"};
-async function doMMVoidBalance() { // プレイヤー残高の無効化 (mm_operator_void RPC: チェーン付き移転で VOID 口座へ送り、残高を減らす)
-  try {
-    const player = (document.getElementById("mm_vb_player")?.value || "").trim();
-    if (!/^[A-Za-z0-9_]{1,16}$/.test(player)) throw new Error("プレイヤーの Minecraft ID を入れてください（半角の英数字と _ 、16文字まで）");
-    const n = parseInt(document.getElementById("mm_vb_amount")?.value, 10);
-    if (!Number.isInteger(n) || n < 1) throw new Error("数量は1以上の整数で入れてください");
-    const reason = (document.getElementById("mm_vb_note")?.value || "").trim();
-    const confirmer = window._mmVoidBalConfirmer || "";
-    const cerr = mmConfirmerCheck(mmNeedsConfirmer(0, n), confirmer, profile.username); if (cerr) throw new Error(cerr);
-    if (!confirm(`${player} さんの残高から ${n}MM を無効化します。取り消しはできません。よろしいですか？`)) return;
-    const note = [reason, confirmer ? `確認:${confirmer}` : ""].filter(Boolean).join(" ");
-    const {data, error} = await sb.rpc("mm_operator_void", {p_mcid: player, p_amount: n, p_note: note});
-    if (error) throw new Error(error.message);
-    if (!data?.ok) throw new Error(MM_VOID_ERR_JP[data?.error] || `エラー: ${data?.error || "不明"}`);
-    await audit("mm_void_balance", `player=${player} amount=${n} note=${note} confirmer=${confirmer || "-"}`);
-    viewMM(`${esc(player)} さんの残高から ${n}MM を無効化しました（残高 ${data.balance} MM）`);
-  } catch (e) { viewMM(esc(e.message), false); }
-}
-async function doMMVoidPhysical() { // 現物MMの無効化 (現物は自販機の外にあるため在庫は変えず、流通量から引く記録だけをチェーンに入れる)
-  try {
-    const mid = parseInt(document.getElementById("mm_vp_machine")?.value, 10);
-    const machines = await fetchMachines(true);
-    const mc = machines.find(x => x.id === mid);
-    if (!mc) throw new Error("自販機を選んでください");
-    const n = parseInt(document.getElementById("mm_vp_amount")?.value, 10);
-    if (!Number.isInteger(n) || n < 1) throw new Error("数量は1以上の整数で入れてください");
-    const reason = (document.getElementById("mm_vp_note")?.value || "").trim();
-    const confirmer = window._mmVoidPhysConfirmer || "";
-    const cerr = mmConfirmerCheck(mmNeedsConfirmer(0, -n), confirmer, profile.username); if (cerr) throw new Error(cerr);
-    if (!confirm(`現物MM ${n}MM を無効化として記録します（帰属: ${mc.name}）。在庫は変わらず、流通量から差し引かれます。取り消しはできません。よろしいですか？`)) return;
-    const note = ["現物MMの無効化", reason, confirmer ? `確認:${confirmer}` : ""].filter(Boolean).join(" ");
-    await insertMMExchange(mc, "void", null, 0, -n, note); // applyMMExchange は在庫も更新してしまうので使わない
-    await audit("mm_void_physical", `machine=${mc.id} amount=${n} note=${note} confirmer=${confirmer || "-"}`);
-    viewMM(`現物MM ${n}MM を無効化として記録しました（流通量から差し引かれます）`);
-  } catch (e) { viewMM(esc(e.message), false); }
-}
-async function doMMPublicUpdate() { // 公開ページ用のスナップショット (mm_public id=1) を更新する
-  try {
-    const st = window._mmState;
-    if (!st) throw new Error("集計がまだできていません");
-    const {error} = await sb.from("mm_public").upsert({id: 1, circulating: st.circulating, dia_total: st.diaTotal, mm_stock_total: st.mmStockTotal, head_hash: st.headHash, chain_count: st.chainCount, updated_at: new Date().toISOString(), updated_by: profile.username});
-    if (error) throw error;
-    await audit("mm_public_update", `circulating=${st.circulating} dia_total=${st.diaTotal} chain=${st.chainCount} head=${(st.headHash || "").slice(0, 16)}`);
-    viewMM("公開スナップショットを更新しました（公開ページに流通量・裏付け・先端ハッシュが出ます）");
-  } catch (e) { viewMM("公開スナップショットを更新できませんでした: " + esc(e.message), false); }
-}
-async function doMMCopyPublicText(btn) { // Wiki 等に貼る公開用テキストをコピーする
-  const st = window._mmState;
-  if (!st) return viewMM("集計がまだできていません", false);
-  const d = new Date();
-  const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  await copyBookText(mmPublicText({date, circulating: st.circulating, diaTotal: st.diaTotal, mmStockTotal: st.mmStockTotal, chainCount: st.chainCount, headHash: st.headHash, verifyText: st.verifyText}), btn);
-}
-
-// ---- めうまねー (MM) 個人間取引・送金 ----
+// ---- ウォレット (残高・個人間取引・送金) ----
 // 本人確認は MCID + PIN を RPC (mm_*) に渡す方式。PIN はメモリ内だけに保持し、ストレージには保存しない。
 // 送金台帳 mm_transfers は公開され、自前のハッシュチェーン MMTCHAINv1 を持つ。
 // record_hash = SHA-256("MMTCHAINv1|{chain_seq}|{prev_hash}|{from_player}|{to_player}|{amount}|{kind}|{offer_id or ''}|{note}")、先頭行の prev_hash は "GENESIS-MMT"。
@@ -1549,11 +1335,12 @@ const MMT_ERR_JP = {
   not_member: "権限がありません",
   bad_code: "本人確認コードが違います"
 };
-const MMT_KIND_JP = {send: "送金", trade: "取引", deposit: "預かり", withdraw: "払い戻し", void: "無効化"};
+const MMT_KIND_JP = {send: "送金", trade: "取引", deposit: "預かり", withdraw: "払い戻し", void: "無効化", card: "カード払い"};
 let tradePlayer = null;      // ログイン中だけ {mcid, pin} を保持する (PIN はメモリのみ)
 let tradeFocusId = null;     // #trade-<uuid> で開いたときの対象出品
 let tradeSideFilter = "all"; // 掲示板の絞り込み: all | sell | buy
 let tradeOfferSide = "sell"; // 出品フォームの向き: sell | buy
+let tradePayMethod = "balance"; // 出品成立時の支払い方法: balance (残高) | card (カード)
 // 本人確認は、販売員が対面で発行したワンタイムコードを使う。
 let tradeVerify = null;      // ログイン後に1回だけ判定する {verified, uuid, verifiedBy}。null は未判定
 let tradeVerifiedSet = new Set(); // mm_public_players で本人確認ずみの MCID 集合 (掲示板の表示用)
@@ -1586,6 +1373,33 @@ async function fetchMMTransfers() { // 送金台帳を全件取得 (id 昇順)�
   }
   return all;
 }
+// ---- カード台帳チェーン (CCCHAINv1)。cc_tx は公開台帳 ----
+// record_hash = SHA-256("CCCHAINv1|{chain_seq}|{prev_hash}|{mcid}|{kind}|{amount}|{period}|{counterparty}|{note}")、先頭行の prev_hash は "GENESIS-CC"。
+const CC_GENESIS = "GENESIS-CC";
+function ccChainString(r) {
+  return ["CCCHAINv1", r.chain_seq, r.prev_hash ?? "", r.mcid ?? "", r.kind ?? "", r.amount, r.period ?? "", r.counterparty ?? "", r.note ?? ""].join("|");
+}
+async function verifyCCChain(rows) { // rows は chain_seq 昇順。verifyMMTChain と同じ返し方
+  let prev = CC_GENESIS;
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    if (r.chain_seq !== i + 1) return {ok: false, atSeq: r.chain_seq, why: "連番が飛んでいます"};
+    if (r.prev_hash !== prev) return {ok: false, atSeq: r.chain_seq, why: "前のレコードとつながっていません"};
+    if (await sha256Hex(ccChainString(r)) !== r.record_hash) return {ok: false, atSeq: r.chain_seq, why: "ハッシュが合いません (書き換えられた可能性)"};
+    prev = r.record_hash;
+  }
+  return {ok: true, count: rows.length, head: rows.length ? rows[rows.length - 1].record_hash : ""};
+}
+async function fetchCCTx() { // カード台帳を全件取得 (id 昇順)。チェーン検証に使う
+  const all = [], PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const {data, error} = await sb.from("cc_tx").select("*").order("id", {ascending: true}).range(from, from + PAGE - 1);
+    if (error) throw error;
+    all.push(...data);
+    if (data.length < PAGE) break;
+  }
+  return all;
+}
 async function mmRpc(name, args) { // RPC の戻り値 jsonb をそのまま返す。通信エラーだけ throw する
   const {data, error} = await sb.rpc(name, args);
   if (error) throw new Error(error.message);
@@ -1597,13 +1411,13 @@ function tradeOfferCard(o, focus = false) {
   const link = `${location.origin}${location.pathname}#trade-${o.id}`;
   return `<div style="border:1px solid var(--line2);border-radius:12px;padding:12px;margin:10px 0">
     <div><b>${sideLabel}</b> <span class="small">${fmtTime(o.created_at)}</span></div>
-    <div style="font-size:${focus ? 22 : 17}px;margin:4px 0"><b>${esc(o.item)}</b> × ${o.qty}　<b>${o.price_mm} MM</b></div>
+    <div style="font-size:${focus ? 22 : 17}px;margin:4px 0"><b>${esc(o.item)}</b> × ${o.qty}　<b>${o.price_mm} D</b></div>
     <div class="small">出品者: ${esc(o.poster)}${tradeVerifiedSet.has(o.poster) ? " (確認ずみ)" : ""}${o.note ? `<br>メモ: ${esc(o.note)}` : ""}</div>
     <p style="margin:8px 0 0"><button type="button" class="sub" onclick="copyBookText('${link}', this)">リンクをコピー</button>
     ${focus ? "" : `<button type="button" class="sub" onclick="location.hash='trade-${o.id}'">取引する</button>`}</p></div>`;
 }
 async function viewTrade(m = "", ok = true) {
-  let offers = [], focus = null, transfers = [], chainRes = null, myOffers = [];
+  let offers = [], focus = null, transfers = [], chainRes = null, myOffers = [], ccChainRes = null, cardInfo = null;
   try {
     const [offRes, tr] = await Promise.all([
       sb.from("mm_offers").select("*").eq("status", "open").order("created_at", {ascending: false}).limit(100),
@@ -1613,6 +1427,8 @@ async function viewTrade(m = "", ok = true) {
     offers = offRes.data || [];
     transfers = tr;
     chainRes = await verifyMMTChain(transfers.filter(t => t.chain_seq != null).sort((a, b) => a.chain_seq - b.chain_seq));
+    const ccTx = await fetchCCTx();
+    ccChainRes = await verifyCCChain(ccTx.filter(t => t.chain_seq != null).sort((a, b) => a.chain_seq - b.chain_seq));
     if (tradeFocusId) {
       const {data} = await sb.from("mm_offers").select("*").eq("id", tradeFocusId).single();
       focus = data || null;
@@ -1631,6 +1447,10 @@ async function viewTrade(m = "", ok = true) {
         tradeVerify = {verified: !!(st && st.ok && st.verified), uuid: (st && st.uuid) || "", verifiedBy: (st && st.verified_by) || ""};
       } catch (e) { tradeVerify = {verified: false, uuid: "", verifiedBy: ""}; }
     }
+    if (tradePlayer) { // 自分のカード情報 (失敗したらカード欄だけ出さない)
+      try { cardInfo = await mmRpc("cc_my_card", {p_mcid: tradePlayer.mcid, p_pin: tradePlayer.pin}); }
+      catch (e) { cardInfo = null; }
+    }
   } catch (e) {
     $main.innerHTML = msg(m, ok) + `<div class="card"><h2>ウォレット</h2><p class="err">読み込めませんでした: ${esc(e.message)}</p><p class="hint">取引テーブル (mm_offers / mm_transfers) がまだ用意されていない可能性があります。</p></div>`;
     return;
@@ -1638,7 +1458,7 @@ async function viewTrade(m = "", ok = true) {
   const me = tradePlayer;
   const balance = me ? mmtBalanceOf(transfers, me.mcid) : 0;
   let h = msg(m, ok) + `<h2>ウォレット</h2>
-  <p class="hint">めうまねー (MM) の残高ページです。MM は残高として持ち、送金やアイテム取引の支払いに使います。現物の MM は、残高への入金と残高からの出金の窓口のひとつです。アイテムの受け渡しはゲーム内で行い、MM の支払いだけがここで確定します。出品のリンクを Discord などに貼って使うことを想定しています。</p>`;
+  <p class="hint">残高はダイヤ建てです。送金やアイテム取引の支払いに使います。アイテムの受け渡しはゲーム内で行い、支払いだけがここで確定します。出品のリンクを Discord などに貼って使うことを想定しています。</p>`;
   // リンクから開いた出品の詳細
   if (tradeFocusId) {
     h += `<div class="card" id="trade_detail"><h3>出品の詳細</h3>`;
@@ -1647,12 +1467,12 @@ async function viewTrade(m = "", ok = true) {
       h += tradeOfferCard(focus, true);
       if (focus.status === "open") {
         h += focus.side === "sell"
-          ? `<p class="hint">${esc(focus.poster)} さんが売っている出品です。取引すると、あなたから ${esc(focus.poster)} さんへ ${focus.price_mm}MM が送金されます。アイテムはゲーム内で受け取ってください。</p>`
-          : `<p class="hint">${esc(focus.poster)} さんが買いたがっている出品です。取引すると、${esc(focus.poster)} さんからあなたへ ${focus.price_mm}MM が送金されます。アイテムはゲーム内で渡してください。</p>`;
+          ? `<p class="hint">${esc(focus.poster)} さんが売っている出品です。取引すると、あなたから ${esc(focus.poster)} さんへ ${focus.price_mm}D が送金されます。アイテムはゲーム内で受け取ってください。</p>`
+          : `<p class="hint">${esc(focus.poster)} さんが買いたがっている出品です。取引すると、${esc(focus.poster)} さんからあなたへ ${focus.price_mm}D が送金されます。アイテムはゲーム内で渡してください。</p>`;
         h += me
           ? (focus.poster === me.mcid
             ? `<p class="hint">これは自分の出品です。</p>`
-            : `<p><button type="button" onclick="doTradeAccept('${focus.id}')">この内容で取引する (${focus.price_mm}MM)</button></p>`)
+            : `<label class="f">支払い方法</label><div class="seg"><button type="button" class="${tradePayMethod === "balance" ? "on" : ""}" onclick="tradePayMethod='balance';viewTrade()">残高</button><button type="button" class="${tradePayMethod === "card" ? "on" : ""}" onclick="tradePayMethod='card';viewTrade()">カード</button></div><p><button type="button" onclick="doTradeAccept('${focus.id}')">この内容で取引する (${focus.price_mm}D)</button></p>`)
           : `<p class="hint">取引するには、ウォレットに登録・ログインしてください。</p>`;
       } else h += `<p class="hint">この出品は${focus.status === "done" ? "取引成立ずみ" : "取り消しずみ"}です${focus.partner ? ` (相手: ${esc(focus.partner)})` : ""}。</p>`;
     }
@@ -1668,7 +1488,7 @@ async function viewTrade(m = "", ok = true) {
     <p class="hint">コードは対面で販売員から受け取ってください。</p>
     <p><button type="button" onclick="doTradeLogin()">ログイン</button>
     <button type="button" class="sub" onclick="doTradeRegister()">はじめて登録</button></p>
-    <p class="hint">暗証番号は使い回さないでください (他のサービスと同じものにしない)。このページの暗証番号はメモリ内だけに保持され、保存されません。アイテムの受け渡しはゲーム内で行ってください。MM の支払いだけがここで確定します。</p></div>`;
+    <p class="hint">暗証番号は使い回さないでください (他のサービスと同じものにしない)。このページの暗証番号はメモリ内だけに保持され、保存されません。アイテムの受け渡しはゲーム内で行ってください。支払いだけがここで確定します。</p></div>`;
   } else {
     // ウォレットカード (残高・本人確認の状態・送金)
     const verifyText = tradeVerify && tradeVerify.verified
@@ -1678,11 +1498,11 @@ async function viewTrade(m = "", ok = true) {
       : "本人確認はまだです";
     h += `<div class="card"><h3>ウォレット</h3>
     <p><b>${esc(me.mcid)}</b>　${verifyText}　<button type="button" class="sub" onclick="doTradeLogout()">ログアウト</button></p>
-    <div class="kpi" style="margin:10px 0"><div class="box"><span>残高</span><b>${balance} MM</b></div></div>
-    <p class="hint">入金: ダイヤまたは現物MMを運営に渡すと、残高に反映されます。出金: 残高から現物MMで受け取れます。どちらも運営窓口で手続きしてください。</p>
+    <div class="kpi" style="margin:10px 0"><div class="box"><span>残高</span><b>${balance} D</b></div></div>
+    <p class="hint">入金: ダイヤを運営に渡すと、残高に反映されます。出金: 残高はダイヤで受け取れます。どちらも運営窓口で手続きしてください。</p>
     <h3 style="margin-top:16px">送金</h3>
     <label class="f">相手の Minecraft ID</label><input id="tp_to" maxlength="16" placeholder="例: Alex_9">
-    <label class="f">金額 (MM)</label><input id="tp_amount" type="number" min="1" value="10">
+    <label class="f">金額 (D)</label><input id="tp_amount" type="number" min="1" value="10">
     <label class="f">メモ (任意)</label><input id="tp_note" maxlength="200">
     <p><button type="button" onclick="doTradeSend()">送金する</button></p>`;
     // 本人確認 (対面コード方式。状態はウォレット上部に出し、未確認のときだけ入力欄を出す)
@@ -1693,6 +1513,38 @@ async function viewTrade(m = "", ok = true) {
       <p><button type="button" onclick="doTradeVerifyWithCode()">本人確認する</button></p>`;
     }
     h += `</div>`;
+    // クレジットカード (cc_my_card)。取得できなかった場合は欄ごと出さない
+    if (cardInfo && cardInfo.ok) {
+      h += `<div class="card"><h3>クレジットカード</h3>`;
+      if (!cardInfo.has_card) {
+        h += `<p class="hint">カードは未発行です。本人確認ずみの方が運営に申請してください。</p>`;
+      } else {
+        const debt = cardInfo.debt || {total: 0, overdue: 0, next_due: null, next_due_amount: 0};
+        h += `<div class="kpi" style="margin:10px 0">
+          <div class="box"><span>利用可能額</span><b>${cardInfo.available} D</b></div>
+          <div class="box"><span>利用残高</span><b>${debt.total} D</b></div>
+          <div class="box"><span>今月の利用</span><b>${cardInfo.this_month} D</b></div>
+          <div class="box"><span>利用限度額</span><b>${cardInfo.credit_limit} D</b></div>
+          <div class="box"><span>次回の支払期限</span><b>${debt.next_due ? `${esc(debt.next_due)}（${debt.next_due_amount} D）` : "―"}</b></div></div>`;
+        if (cardInfo.usable !== "ok") h += `<p class="err">${esc(CC_USABLE_JP[cardInfo.usable] || "現在カードは利用できません")}</p>`;
+        h += `<p class="hint">締めは月次です。利用した月の翌月10日までに、ダイヤで運営へ精算してください。利息・手数料はありません。</p>`;
+        const periods = cardInfo.periods || [];
+        if (periods.length) {
+          h += `<h3 style="margin-top:16px">月別の明細</h3><div class="scroll"><table><tr><th>対象月</th><th>利用額</th><th>未払い</th><th>支払期限</th></tr>${periods.map(p => `<tr><td>${esc(p.period)}</td><td>${p.charged} D</td><td>${p.outstanding} D</td><td>${esc(p.due)}</td></tr>`).join("")}</table></div>`;
+        }
+        const recent = cardInfo.recent || [];
+        if (recent.length) {
+          h += `<h3 style="margin-top:16px">最近の利用・精算</h3><div class="scroll"><table><tr><th>日時</th><th>種別</th><th>金額</th><th>相手</th><th>メモ</th></tr>${recent.map(r => `<tr><td>${fmtTime(r.created_at)}</td><td>${CC_KIND_JP[r.kind] || esc(r.kind)}</td><td>${r.kind === "repay" ? "-" : "+"}${r.amount} D</td><td>${esc(r.counterparty || "")}</td><td>${esc(r.note || "")}</td></tr>`).join("")}</table></div>`;
+        }
+        h += `<h3 style="margin-top:16px">カードで送金</h3>
+        <p class="hint">相手の残高へすぐに入金されます。使った分は翌月10日までの精算分になります。</p>
+        <label class="f">相手の Minecraft ID</label><input id="ccp_to" maxlength="16" placeholder="例: Alex_9">
+        <label class="f">金額 (D)</label><input id="ccp_amount" type="number" min="1" value="10">
+        <label class="f">メモ (任意)</label><input id="ccp_note" maxlength="200">
+        <p><button type="button" onclick="doCCPay()">カードで送金する</button></p>`;
+      }
+      h += `</div>`;
+    }
     // 自分の履歴
     const mine = transfers.filter(t => t.from_player === me.mcid || t.to_player === me.mcid).slice(-20).reverse();
     h += `<div class="card"><h3>自分の履歴 (直近20件)</h3>`;
@@ -1701,8 +1553,9 @@ async function viewTrade(m = "", ok = true) {
       const inTx = t.to_player === me.mcid;
       const other = t.from_player === "OPERATOR" || t.to_player === "OPERATOR" ? "運営"
         : t.from_player === "VOID" || t.to_player === "VOID" ? "無効化"
+        : t.from_player === "CARD" || t.to_player === "CARD" ? "カード"
         : (inTx ? t.from_player : t.to_player);
-      return `<tr><td>${fmtTime(t.created_at)}</td><td>${MMT_KIND_JP[t.kind] || esc(t.kind)}</td><td>${esc(other)}</td><td>${inTx ? "+" : "-"}${t.amount} MM</td><td>${esc(t.note)}</td></tr>`;
+      return `<tr><td>${fmtTime(t.created_at)}</td><td>${MMT_KIND_JP[t.kind] || esc(t.kind)}</td><td>${esc(other)}</td><td>${inTx ? "+" : "-"}${t.amount} D</td><td>${esc(t.note)}</td></tr>`;
     }).join("")}</table></div>`;
     h += `</div>`;
   }
@@ -1714,14 +1567,14 @@ async function viewTrade(m = "", ok = true) {
     <div class="seg"><button type="button" class="${tradeOfferSide === "sell" ? "on" : ""}" onclick="tradeOfferSide='sell';viewTrade()">売りたい</button><button type="button" class="${tradeOfferSide === "buy" ? "on" : ""}" onclick="tradeOfferSide='buy';viewTrade()">買いたい</button></div>
     <label class="f">アイテム名</label><input id="tp_item" maxlength="80" placeholder="例: ダイヤモンド">
     <label class="f">個数</label><input id="tp_qty" type="number" min="1" value="1">
-    <label class="f">合計価格 (MM)</label><input id="tp_price" type="number" min="1" value="10">
+    <label class="f">合計価格 (D)</label><input id="tp_price" type="number" min="1" value="10">
     <label class="f">メモ (任意)</label><input id="tp_onote" maxlength="200" placeholder="例: 取引板で声をかけてください">
     <p><button type="button" onclick="doTradeCreateOffer()">出品する</button></p>
     <p class="hint">${tradeOfferSide === "buy" ? "「買いたい」出品には残高が必要です (支払いは取引成立時に行われます)。" : "「売りたい」出品は、相手が取引した時点で代金が残高に入ります。"}</p>
     <h3 style="margin-top:16px">自分の出品</h3>`;
     if (!myOffers.length) h += `<p class="hint">まだありません。</p>`;
     else h += myOffers.map(o => `<div style="border:1px solid var(--line2);border-radius:12px;padding:10px;margin:8px 0">
-      <b>${o.side === "sell" ? "売りたい" : "買いたい"}</b> ${esc(o.item)} × ${o.qty}　<b>${o.price_mm} MM</b>
+      <b>${o.side === "sell" ? "売りたい" : "買いたい"}</b> ${esc(o.item)} × ${o.qty}　<b>${o.price_mm} D</b>
       <span class="small">${o.status === "open" ? "受付中" : o.status === "done" ? `成立 (相手: ${esc(o.partner)})` : "取り消し"} ／ ${fmtTime(o.created_at)}</span>
       ${o.status === "open" ? `<p style="margin:6px 0 0"><button type="button" class="sub" onclick="copyBookText('${location.origin}${location.pathname}#trade-${o.id}', this)">リンクをコピー</button> <button type="button" class="sub" onclick="doTradeCancel('${o.id}')">取り消す</button></p>` : ""}</div>`).join("");
   }
@@ -1729,9 +1582,10 @@ async function viewTrade(m = "", ok = true) {
   if (!shown.length) h += `<p class="hint">表示する出品がありません。</p>`;
   else h += shown.map(o => tradeOfferCard(o)).join("");
   h += `</div>`;
-  h += `<div class="card"><h3>送金チェーン (改ざん検知)</h3>
+  h += `<div class="card"><h3>台帳チェーン (改ざん検知)</h3>
   ${chainRes && chainRes.ok ? `<p class="ok">送金チェーン: 検証OK (${chainRes.count}件)</p>` : `<p class="err">送金チェーン: 検証で異常が見つかりました${chainRes ? ` (#${chainRes.atSeq}: ${esc(chainRes.why || "不一致")})` : ""}</p>`}
-  <p class="hint">送金台帳は全件公開され、ハッシュチェーンでつながっています。残高はこの台帳の合算です。</p></div>`;
+  ${ccChainRes && ccChainRes.ok ? `<p class="ok">カードチェーン: 検証OK (${ccChainRes.count}件)</p>` : `<p class="err">カードチェーン: 検証で異常が見つかりました${ccChainRes ? ` (#${ccChainRes.atSeq}: ${esc(ccChainRes.why || "不一致")})` : ""}</p>`}
+  <p class="hint">送金台帳とカード台帳は全件公開され、それぞれハッシュチェーンでつながっています。残高は送金台帳の合算です。</p></div>`;
   $main.innerHTML = h;
   if (tradeFocusId) document.getElementById("trade_detail")?.scrollIntoView();
 }
@@ -1751,7 +1605,7 @@ async function doTradeRegister() {
     tradePlayer = {mcid, pin};
     tradeVerify = null;
     localStorage.setItem("mm_trade_mcid", mcid);
-    viewTrade(`登録とログインが完了しました。残高は ${login.balance ?? 0}MM です。`);
+    viewTrade(`登録とログインが完了しました。残高は ${login.balance ?? 0}D です。`);
   } catch (e) { viewTrade(esc(e.message), false); }
 }
 async function doTradeLogin() {
@@ -1762,7 +1616,7 @@ async function doTradeLogin() {
     tradePlayer = {mcid, pin};
     tradeVerify = null;
     localStorage.setItem("mm_trade_mcid", mcid);
-    viewTrade(`ログインしました。残高は ${data.balance ?? 0}MM です。`);
+    viewTrade(`ログインしました。残高は ${data.balance ?? 0}D です。`);
   } catch (e) { viewTrade(esc(e.message), false); }
 }
 function doTradeLogout() {
@@ -1788,10 +1642,23 @@ async function doTradeSend() {
     const amount = parseInt(document.getElementById("tp_amount")?.value, 10);
     const note = (document.getElementById("tp_note")?.value || "").trim();
     if (!Number.isInteger(amount) || amount < 1) throw new Error("金額は1以上の整数で入力してください");
-    if (!confirm(`${to} へ ${amount}MM を送金します。よろしいですか？`)) return;
+    if (!confirm(`${to} へ ${amount}D を送金します。よろしいですか？`)) return;
     const data = await mmRpc("mm_send", {p_mcid: tradePlayer.mcid, p_pin: tradePlayer.pin, p_to: to, p_amount: amount, p_note: note});
     if (!data?.ok) return viewTrade(mmtErrText(data?.error), false);
-    viewTrade(`${esc(to)} へ ${amount}MM を送金しました。残高は ${data.balance ?? ""}MM です。`);
+    viewTrade(`${esc(to)} へ ${amount}D を送金しました。残高は ${data.balance ?? ""}D です。`);
+  } catch (e) { viewTrade(esc(e.message), false); }
+}
+async function doCCPay() { // カードで送金 (cc_pay RPC)。相手の残高へ即入金され、自分の借入になる
+  if (!tradePlayer) return viewTrade("先にログインしてください。", false);
+  try {
+    const to = (document.getElementById("ccp_to")?.value || "").trim();
+    const amount = parseInt(document.getElementById("ccp_amount")?.value, 10);
+    const note = (document.getElementById("ccp_note")?.value || "").trim();
+    if (!Number.isInteger(amount) || amount < 1) throw new Error("金額は1以上の整数で入力してください");
+    if (!confirm(`${to} へ ${amount}D をカードで送金します。相手にはすぐに入金され、あなたの利用残高に ${amount}D が加わります。よろしいですか？`)) return;
+    const data = await mmRpc("cc_pay", {p_mcid: tradePlayer.mcid, p_pin: tradePlayer.pin, p_to: to, p_amount: amount, p_note: note});
+    if (!data?.ok) return viewTrade(ccErrText(data?.error), false);
+    viewTrade(`${esc(to)} へ ${amount}D をカードで送金しました。利用残高は ${data.debt?.total ?? ""}D です。`);
   } catch (e) { viewTrade(esc(e.message), false); }
 }
 async function doTradeCreateOffer() {
@@ -1812,13 +1679,17 @@ async function doTradeAccept(id) {
   try {
     const {data: o} = await sb.from("mm_offers").select("*").eq("id", id).single();
     if (!o || o.status !== "open") return viewTrade("もう終わった取引です", false);
+    const byCard = tradePayMethod === "card";
+    const methodTxt = byCard ? "カード払いで" : "残高から";
     const text = o.side === "sell"
-      ? `${o.poster} の「${o.item} ×${o.qty}」を ${o.price_mm}MM で買います。支払いが確定します。アイテムはゲーム内で受け取ってください。実行しますか？`
-      : `${o.poster} に「${o.item} ×${o.qty}」を売ります。${o.price_mm}MM が残高に入ります。アイテムはゲーム内で渡してください。実行しますか？`;
+      ? `${o.poster} の「${o.item} ×${o.qty}」を ${o.price_mm}D で買います。${methodTxt}支払いが確定します。アイテムはゲーム内で受け取ってください。実行しますか？`
+      : `${o.poster} に「${o.item} ×${o.qty}」を売ります。${o.price_mm}D が${byCard ? "カード払いで" : ""}残高に入ります。アイテムはゲーム内で渡してください。実行しますか？`;
     if (!confirm(text)) return;
-    const data = await mmRpc("mm_accept_offer", {p_mcid: tradePlayer.mcid, p_pin: tradePlayer.pin, p_offer: id});
-    if (!data?.ok) return viewTrade(mmtErrText(data?.error), false);
-    viewTrade(`取引が成立しました。${esc(data.from)} から ${esc(data.to)} へ ${data.amount}MM が送金されました。`);
+    const data = byCard
+      ? await mmRpc("cc_accept_offer", {p_mcid: tradePlayer.mcid, p_pin: tradePlayer.pin, p_offer: id})
+      : await mmRpc("mm_accept_offer", {p_mcid: tradePlayer.mcid, p_pin: tradePlayer.pin, p_offer: id});
+    if (!data?.ok) return viewTrade(byCard ? ccErrText(data?.error) : mmtErrText(data?.error), false);
+    viewTrade(`取引が成立しました。${esc(data.from)} から ${esc(data.to)} へ ${data.amount}D が${byCard ? "カード払いで" : ""}送金されました。`);
   } catch (e) { viewTrade(esc(e.message), false); }
 }
 async function doTradeCancel(id) {
@@ -1839,8 +1710,8 @@ function viewMore() {
   ${item("numbers", "番号一覧", "番号ごとの買った人と配当")}
   ${item("donations", "寄付", "寄付の受付と残り枚数")}
   ${item("manage", "券の管理", "無効化と譲渡")}
-  ${item("mm", "MM両替", "めうまねー (MM) の発行・還元と自販機の在庫")}
-  ${item("trade", "ウォレット", "MM の残高・送金とアイテム取引の掲示板")}
+  ${item("mm", "カード管理", "クレジットカードの発行・変更と精算の受付")}
+  ${item("trade", "ウォレット", "残高・送金とアイテム取引の掲示板")}
   ${item("public", "みんなの実績", "公開ページを見る")}
   ${profile.role === "admin" ? item("rounds", "回・設定", "回の作成と状態変更") + item("users", "販売員", "有効化と役割") + item("audit", "記録", "操作ログ") : ""}
   </div>`;
@@ -1871,7 +1742,7 @@ async function render() {
     case "manage": return viewManage();
     case "book": return viewBook();
     case "proposals": location.hash = "#sell"; return;
-    case "mm": return viewMM();
+    case "mm": return viewCard();
     case "trade": return viewTrade();
     case "more": location.hash = "#sell"; return;
     case "rounds": return profile?.role === "admin" ? viewRounds() : viewApp();

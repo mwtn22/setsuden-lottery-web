@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>めうまねー (MM) フルバックアップ復元ツール</title>
+<title>フルバックアップ復元ツール（MM / クレジットカード）</title>
 <style>
 :root{
   --bg:#f4f4f2; --panel:#ffffff; --panel2:#fafafa;
@@ -36,8 +36,8 @@ th{color:var(--sub);font-weight:600}
 </head>
 <body>
 <main>
-<h1>めうまねー (MM) フルバックアップ復元ツール</h1>
-<p class="hint">本体の「MM」タブで保存したフルバックアップ (mm-full-backup-v1) を読み込み、内容の確認と復元用 SQL の生成を行う単一ファイルツールです。ネットなしで動きます。</p>
+<h1>フルバックアップ復元ツール</h1>
+<p class="hint">本体の「カード管理」タブで保存したフルバックアップ (mm-full-backup-v1 / v2) を読み込み、内容の確認と復元用 SQL の生成を行う単一ファイルツールです。v2 はクレジットカード (cc_cards / cc_tx) を含みます。ネットなしで動きます。</p>
 <div class="warn"><b>バックアップにはプレイヤーの暗証番号ハッシュが含まれます。ファイルの取り扱いに注意してください</b></div>
 
 <div class="card">
@@ -58,7 +58,7 @@ th{color:var(--sub);font-weight:600}
 
   <div class="card">
     <h2>3. 復元用 SQL を作る</h2>
-    <p class="hint">前提: 新規 Supabase プロジェクトに schema.sql / schema_mm_trade.sql / schema_mm_invite.sql / schema_mm_void.sql / schema_mm_backup.sql を適用済みで、MM テーブルが空であること。生成した SQL を新しいプロジェクトの SQL Editor に貼って実行すると復元されます。空でないテーブルに流すと主キー重複で失敗します。</p>
+    <p class="hint">前提: 新規 Supabase プロジェクトに schema.sql / schema_mm_trade.sql / schema_mm_invite.sql / schema_mm_void.sql / schema_mm_backup.sql / schema_cc.sql を適用済みで、対象テーブルが空であること。生成した SQL を新しいプロジェクトの SQL Editor に貼って実行すると復元されます。空でないテーブルに流すと主キー重複で失敗します。</p>
     <div id="sqlwarn"></div>
     <p><button type="button" onclick="downloadSql()">復元用SQLをダウンロード</button></p>
   </div>
@@ -69,13 +69,18 @@ th{color:var(--sub);font-weight:600}
 // ===== フルバックアップ復元 純粋ロジック（本体 index.html / mm-tool.html と同一仕様） =====
 // 台帳チェーン MMCHAINv1: record_hash = SHA-256("MMCHAINv1|{chain_seq}|{prev_hash}|{machine_id}|{kind}|{player}|{dia_delta}|{mm_delta}|{seller}|{note}")、先頭は GENESIS-MM。
 // 送金チェーン MMTCHAINv1: record_hash = SHA-256("MMTCHAINv1|{chain_seq}|{prev_hash}|{from_player}|{to_player}|{amount}|{kind}|{offer_id}|{note}")、先頭は GENESIS-MMT。
+// カードチェーン CCCHAINv1: record_hash = SHA-256("CCCHAINv1|{chain_seq}|{prev_hash}|{mcid}|{kind}|{amount}|{period}|{counterparty}|{note}")、先頭は GENESIS-CC。
 const MM_GENESIS = "GENESIS-MM";
 const MMT_GENESIS = "GENESIS-MMT";
+const CC_GENESIS = "GENESIS-CC";
 function mmChainString(r) {
   return ["MMCHAINv1", r.chain_seq, r.prev_hash ?? "", String(r.machine_id ?? ""), r.kind ?? "", r.player ?? "", r.dia_delta, r.mm_delta, r.seller ?? "", r.note ?? ""].join("|");
 }
 function mmtChainString(r) {
   return ["MMTCHAINv1", r.chain_seq, r.prev_hash ?? "", r.from_player ?? "", r.to_player ?? "", r.amount, r.kind ?? "", r.offer_id ?? "", r.note ?? ""].join("|");
+}
+function ccChainString(r) {
+  return ["CCCHAINv1", r.chain_seq, r.prev_hash ?? "", r.mcid ?? "", r.kind ?? "", r.amount, r.period ?? "", r.counterparty ?? "", r.note ?? ""].join("|");
 }
 function sha256HexSync(text) { // 純JSの SHA-256（外部ライブラリなし・オフラインで動かすため。mm-tool.html と同一実装）
   const K = [0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
@@ -127,6 +132,7 @@ function verifyChainSync(rows, genesis, chainString) { // rows は chain_seq 昇
 }
 function verifyMMChainSync(rows) { return verifyChainSync(rows, MM_GENESIS, mmChainString); }
 function verifyMMTChainSync(rows) { return verifyChainSync(rows, MMT_GENESIS, mmtChainString); }
+function verifyCCChainSync(rows) { return verifyChainSync(rows, CC_GENESIS, ccChainString); }
 function splitChainRows(rows) { // チェーン行（chain_seq 昇順）とチェーン対象外の行に分ける
   const chained = (rows || []).filter(r => r.chain_seq != null).slice().sort((a, b) => a.chain_seq - b.chain_seq);
   const plain = (rows || []).filter(r => r.chain_seq == null);
@@ -154,15 +160,17 @@ const RESTORE_TABLES = [
   {key: "offers", name: "mm_offers", seq: false, cols: ["id", "side", "item", "qty", "price_mm", "poster", "note", "status", "partner", "created_at", "closed_at"]},
   {key: "invite_codes", name: "mm_invite_codes", seq: false, cols: ["code", "mcid", "issued_by", "status", "created_at", "expires_at", "used_at"]},
   {key: "exchanges", name: "mm_exchanges", seq: true, cols: ["id", "machine_id", "seller", "kind", "player", "dia_delta", "mm_delta", "note", "created_at", "chain_seq", "prev_hash", "record_hash"]},
-  {key: "transfers", name: "mm_transfers", seq: true, cols: ["id", "from_player", "to_player", "amount", "kind", "offer_id", "note", "chain_seq", "prev_hash", "record_hash", "created_at"]}
+  {key: "transfers", name: "mm_transfers", seq: true, cols: ["id", "from_player", "to_player", "amount", "kind", "offer_id", "note", "chain_seq", "prev_hash", "record_hash", "created_at"]},
+  {key: "cc_cards", name: "cc_cards", seq: false, cols: ["mcid", "credit_limit", "status", "issued_by", "created_at", "updated_at"]},
+  {key: "cc_tx", name: "cc_tx", seq: true, cols: ["id", "mcid", "kind", "amount", "period", "counterparty", "note", "chain_seq", "prev_hash", "record_hash", "created_at"]}
 ];
 function generateRestoreSql(backup, sourceName) {
   const oneLine = s => String(s ?? "").replace(/[\r\n]+/g, " ");
   const lines = [];
-  lines.push("-- めうまねー (MM) フルバックアップ復元用 SQL");
+  lines.push("-- フルバックアップ復元用 SQL（MM / クレジットカード）");
   lines.push("-- 生成元ファイル: " + oneLine(sourceName || "不明"));
   lines.push("-- バックアップ形式: " + oneLine(backup.format || "") + " / 作成日時: " + oneLine(backup.created_at || ""));
-  lines.push("-- 前提: 新規 Supabase プロジェクトに schema.sql / schema_mm_trade.sql / schema_mm_invite.sql / schema_mm_void.sql / schema_mm_backup.sql を適用済みで、MM テーブルが空であること。");
+  lines.push("-- 前提: 新規 Supabase プロジェクトに schema.sql / schema_mm_trade.sql / schema_mm_invite.sql / schema_mm_void.sql / schema_mm_backup.sql / schema_cc.sql を適用済みで、対象テーブルが空であること。");
   lines.push("-- 空でないテーブルに流すと主キー重複で失敗します。");
   lines.push("");
   lines.push("begin;");
@@ -200,8 +208,8 @@ function loadFile(file) {
   reader.onload = () => {
     try {
       const data = JSON.parse(reader.result);
-      if (data.format !== "mm-full-backup-v1") throw new Error("mm-full-backup-v1 形式のファイルではありません");
-      for (const k of ["players", "transfers", "offers", "machines", "exchanges", "invite_codes"]) {
+      if (data.format !== "mm-full-backup-v1" && data.format !== "mm-full-backup-v2") throw new Error("mm-full-backup-v1 / v2 形式のファイルではありません");
+      for (const k of ["players", "transfers", "offers", "machines", "exchanges", "invite_codes", "cc_cards", "cc_tx"]) {
         if (data[k] !== undefined && !Array.isArray(data[k])) throw new Error(`${k} が配列ではありません`);
         if (data[k] === undefined) data[k] = [];
       }
@@ -232,14 +240,16 @@ function render() {
     </table></div>`;
   const tSplit = splitChainRows(backup.transfers);
   const eSplit = splitChainRows(backup.exchanges);
+  const cSplit = splitChainRows(backup.cc_tx || []);
   const tRes = verifyMMTChainSync(tSplit.chained);
   const eRes = verifyMMChainSync(eSplit.chained);
-  $("chains").innerHTML = chainBox("送金チェーン (MMTCHAINv1)", tRes, tSplit.plain.length) + chainBox("台帳チェーン (MMCHAINv1)", eRes, eSplit.plain.length);
-  $("sqlwarn").innerHTML = (!tRes.ok || !eRes.ok)
+  const cRes = verifyCCChainSync(cSplit.chained);
+  $("chains").innerHTML = chainBox("送金チェーン (MMTCHAINv1)", tRes, tSplit.plain.length) + chainBox("台帳チェーン (MMCHAINv1)", eRes, eSplit.plain.length) + chainBox("カードチェーン (CCCHAINv1)", cRes, cSplit.plain.length);
+  $("sqlwarn").innerHTML = (!tRes.ok || !eRes.ok || !cRes.ok)
     ? `<div class="err">チェーンが壊れているバックアップです。復元はできますが、内容が正しいか先に確認してください</div>` : "";
   const bal = computeBalances(backup.transfers);
   const mcids = new Set([...(backup.players || []).map(p => p.mcid), ...Object.keys(bal)]);
-  const rows = [...mcids].sort().map(m => `<tr><td>${esc(m)}${(m === "OPERATOR" || m === "VOID") ? "（疑似口座）" : ""}</td><td>${bal[m] || 0} MM</td></tr>`).join("");
+  const rows = [...mcids].sort().map(m => `<tr><td>${esc(m)}${(m === "OPERATOR" || m === "VOID") ? "（疑似口座）" : m === "CARD" ? "（カード立替）" : ""}</td><td>${bal[m] || 0} D</td></tr>`).join("");
   $("balances").innerHTML = rows
     ? `<div class="scroll"><table><tr><th>プレイヤー</th><th>残高</th></tr>${rows}</table></div>`
     : `<p class="hint">プレイヤーがいません。</p>`;
