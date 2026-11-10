@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>節電鯖本Vol.3 コミケレジ</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+  html, body { touch-action: manipulation; overscroll-behavior: none; }
+  body { margin: 0; font-family: -apple-system, "Hiragino Sans", sans-serif; background: #f4f4f4; color: #222; }
+  header { background: #fff; border-bottom: 1px solid #ddd; padding: 10px 14px; }
+  header h1 { font-size: 16px; margin: 0; display: inline-block; }
+  header .sub { font-size: 12px; color: #666; margin-top: 2px; }
+  .pill { display: inline-block; font-size: 11px; font-weight: 700; border-radius: 999px; padding: 2px 9px; margin-left: 8px; vertical-align: 2px; }
+  .pill.on { background: #e3f5e3; color: #187018; border: 1px solid #9ccc9c; }
+  .pill.off { background: #eee; color: #666; border: 1px solid #bbb; }
+  .pill .pend { font-weight: 400; }
+  .statusline { margin-top: 6px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .statusline .pill { margin-left: 0; }
+  .netstat { font-size: 12px; color: #555; }
+  .pendstat { font-size: 12px; color: #b45309; font-weight: 700; }
+  .stats { display: flex; gap: 8px; padding: 10px 14px 0; }
+  .stat { flex: 1; background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 8px; text-align: center; }
+  .stat .label { font-size: 11px; color: #666; }
+  .stat .value { font-size: 20px; font-weight: 700; margin-top: 2px; }
+  section { padding: 10px 14px 0; }
+  .item { background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 10px 12px; margin-bottom: 8px;
+          display: flex; align-items: center; gap: 10px; }
+  .item .info { flex: 1; }
+  .item .name { font-size: 15px; font-weight: 600; }
+  .item .price { font-size: 12px; color: #666; }
+  .qty { display: flex; align-items: center; gap: 6px; }
+  .qty button { width: 40px; height: 40px; font-size: 20px; border: 1px solid #bbb; background: #fff; border-radius: 6px; }
+  .qty .n { min-width: 28px; text-align: center; font-size: 18px; font-weight: 700; }
+  .total-box { background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 10px 12px; }
+  .total-row { display: flex; justify-content: space-between; font-size: 15px; padding: 3px 0; }
+  .total-row.big { font-size: 20px; font-weight: 700; }
+  .tender { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 8px; }
+  .tender button { height: 44px; font-size: 15px; border: 1px solid #bbb; background: #fff; border-radius: 6px; }
+  .actions { display: flex; gap: 8px; padding: 12px 14px 0; }
+  .actions button { flex: 1; height: 52px; font-size: 17px; font-weight: 700; border-radius: 6px; border: 1px solid #bbb; background: #fff; }
+  .actions .checkout { background: #2563eb; border-color: #2563eb; color: #fff; flex: 2; }
+  .actions .checkout:disabled { background: #aab; border-color: #aab; }
+  .tools { display: flex; gap: 8px; padding: 12px 14px; flex-wrap: wrap; }
+  .tools button { height: 38px; padding: 0 12px; font-size: 13px; border: 1px solid #bbb; background: #fff; border-radius: 6px; }
+  #history { padding: 0 14px 8px; }
+  #history h2 { font-size: 13px; color: #666; margin: 6px 0; }
+  .tx { background: #fff; border: 1px solid #e2e2e2; border-radius: 6px; padding: 7px 10px; margin-bottom: 6px; font-size: 13px; }
+  .tx .row { display: flex; justify-content: space-between; }
+  .tx .meta { color: #666; }
+  .tx .ops { display: flex; gap: 6px; margin-top: 6px; }
+  .tx .ops button { height: 30px; padding: 0 10px; font-size: 12px; border: 1px solid #bbb; background: #fff; border-radius: 6px; }
+  .tx .ops .del { color: #b91c1c; border-color: #e0a3a3; }
+  .tx .sync { font-size: 11px; color: #888; margin-left: 6px; }
+  .settings { margin: 4px 14px 0; background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 10px 12px; }
+  .settings h2 { font-size: 13px; margin: 0 0 6px; color: #444; }
+  .settings label { font-size: 12px; color: #666; display: block; margin-bottom: 4px; }
+  .settings .row { display: flex; gap: 6px; }
+  .settings input { flex: 1; height: 38px; font-size: 13px; border: 1px solid #bbb; border-radius: 6px; padding: 0 8px; min-width: 0; }
+  .settings button { height: 38px; padding: 0 12px; font-size: 13px; border: 1px solid #bbb; background: #fff; border-radius: 6px; }
+  .settings .hint { font-size: 11px; color: #888; margin-top: 6px; line-height: 1.5; }
+  .note { font-size: 12px; color: #666; padding: 10px 14px 16px; line-height: 1.6; }
+</style>
+</head>
+<body>
+<header>
+  <h1>節電鯖本Vol.3 コミケレジ</h1>
+  <div class="statusline">
+    <span class="pill off" id="srvPill">サーバー: 確認中</span>
+    <span class="netstat" id="netStat">インターネット: 確認中</span>
+    <span class="pendstat" id="pendStat"></span>
+  </div>
+  <div class="sub">12/29 初出店・東3ホール “モ”ブロック-03b ／ データはこの端末内に保存されます</div>
+  <div class="sub" id="jsStatus">スクリプト: 起動待ち…</div>
+  <noscript><div class="sub" style="color:#b91c1c;font-weight:700">このページはJavaScriptが必要です。Safariで開いてください（ファイルのプレビュー画面では動作しません）</div></noscript>
+</header>
+
+<div class="stats">
+  <div class="stat"><div class="label">販売数</div><div class="value" id="stCount">0</div></div>
+  <div class="stat"><div class="label">売上合計</div><div class="value" id="stSales">¥0</div></div>
+  <div class="stat"><div class="label">残り在庫</div><div class="value" id="stStock">-</div></div>
+</div>
+
+<section id="items"></section>
+
+<section>
+  <div class="total-box">
+    <div class="total-row big"><span>合計</span><span id="sumTotal">¥0</span></div>
+    <div class="total-row"><span>お預かり</span><span id="sumTender">¥0</span></div>
+    <div class="total-row"><span>お釣り</span><span id="sumChange">¥0</span></div>
+    <div class="tender" id="tender"></div>
+  </div>
+</section>
+
+<div class="actions">
+  <button id="btnClear">クリア</button>
+  <button id="btnCheckout" class="checkout" disabled>会計する</button>
+</div>
+
+<div class="tools">
+  <button id="btnUndo">直前の会計を取り消す</button>
+  <button id="btnStock">在庫数を設定</button>
+  <button id="btnSync">今すぐ同期</button>
+  <button id="btnCsv">CSVを書き出す</button>
+  <button id="btnSummary">集計をコピー</button>
+  <button id="btnReset">全データ消去</button>
+</div>
+
+<div id="history"><h2>会計履歴（各会計に 編集／削除 があります）</h2><div id="txList"></div></div>
+
+<div class="settings">
+  <h2>オンライン同期（任意）</h2>
+  <label>Discord Webhook URL（自分の端末にだけ保存されます。Museには渡さないでください）</label>
+  <div class="row">
+    <input type="url" id="whInput" placeholder="https://discord.com/api/webhooks/…" autocomplete="off">
+    <button id="btnWhSave">保存</button>
+  </div>
+  <div class="hint">
+    設定すると、オンライン時は会計のたびにDiscordへ自動送信します。オフライン中の会計は端末内に溜まり、
+    オンライン復帰時にまとめて送信されます（未送信件数は上の表示に出ます）。Webhook未設定でもレジは全部使えます。
+  </div>
+</div>
+
+<div class="note">
+  使い方: 商品の＋で冊数を入れ、お預かり金額を押すとお釣りが出ます。「会計する」で記録されます。<br>
+  修正したい会計は履歴の「編集」でカートに戻して会計し直してください（元の記録は消えます）。<br>
+  セットの販売数＝同封したギフトカードの枚数です。閉会後はギフト管理タブの「同封済み」に反映してください。<br>
+  CSVは「時刻,内容,数量,金額」で書き出せます。管理ブック「コミケ売上」タブへの貼り付け用です。
+</div>
+
+<script>
+"use strict";
+window.addEventListener("error", function (e) {
+  var el = document.getElementById("jsStatus");
+  if (el) { el.textContent = "スクリプトエラー: " + (e.message || "不明"); el.style.color = "#b91c1c"; }
+});
+// ===== 商品定義（価格を変えるときはここ） =====
+var ITEMS = [
+  { id: "set",   name: "セット（Vol.3紙＋電子Vol.2）", price: 2000 },
+  { id: "solo",  name: "単体（Vol.3紙のみ）",          price: 1500 }
+];
+var TENDERS = [10000, 5000, 2000, 1000, 500, 100, 50, 10];
+var LS_KEY = "setsuden_vol3_register_v1";
+
+var state = load() || { txs: [], stock: 60, webhook: "" };
+if (!Array.isArray(state.txs)) state.txs = [];
+if (typeof state.webhook !== "string") state.webhook = "";
+state.txs.forEach(function (tx, i) {           // 旧データ移行: id と synced を補完
+  if (!tx.id) tx.id = "tx" + (i + 1) + "_" + tx.time.replace(":", "");
+  if (typeof tx.synced !== "boolean") tx.synced = false;
+});
+var cart = {};   // id -> qty
+var tender = 0;
+var seq = state.txs.length;
+
+function load() {
+  try { var s = localStorage.getItem(LS_KEY); return s ? JSON.parse(s) : null; }
+  catch (e) { return null; }
+}
+function save() {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch (e) {}
+}
+function yen(n) { return "¥" + n.toLocaleString("ja-JP"); }
+function cartTotal() {
+  var t = 0;
+  ITEMS.forEach(function (it) { t += (cart[it.id] || 0) * it.price; });
+  return t;
+}
+function cartCount() {
+  var c = 0;
+  ITEMS.forEach(function (it) { c += (cart[it.id] || 0); });
+  return c;
+}
+function soldCount() { return state.txs.reduce(function (a, tx) { return a + tx.count; }, 0); }
+function soldTotal() { return state.txs.reduce(function (a, tx) { return a + tx.total; }, 0); }
+function soldByItem(id) {
+  return state.txs.reduce(function (a, tx) {
+    var line = tx.lines.find(function (l) { return l.id === id; });
+    return a + (line ? line.qty : 0);
+  }, 0);
+}
+function pendingCount() { return state.txs.filter(function (tx) { return !tx.synced; }).length; }
+function txDesc(tx) { return tx.lines.map(function (l) { return l.name + " ×" + l.qty; }).join("、"); }
+
+// ===== オンライン/オフライン ハイブリッド同期 =====
+var syncing = false;
+var srvState = "unknown";   // online / offline / unset / unknown（サーバー=同期先への実到達）
+function renderNet() {
+  // インターネット接続状態（ブラウザ標準の判定）
+  var net = document.getElementById("netStat");
+  net.textContent = "インターネット: " + (navigator.onLine ? "接続中" : "未接続");
+  // サーバー状態（実際に届いたかどうかで判定）
+  var pill = document.getElementById("srvPill");
+  var label, cls;
+  if (!state.webhook) { label = "サーバー: 未設定"; cls = "off"; }
+  else if (srvState === "online") { label = "サーバー: オンライン"; cls = "on"; }
+  else if (srvState === "offline") { label = "サーバー: オフライン"; cls = "off"; }
+  else { label = "サーバー: 確認中"; cls = "off"; }
+  pill.className = "pill " + cls;
+  pill.textContent = label;
+  // 未送信件数
+  var pend = pendingCount();
+  document.getElementById("pendStat").textContent =
+    state.webhook && pend > 0 ? "未送信 " + pend + "件" : (state.webhook ? "同期済み" : "");
+}
+var probing = false;
+function probeServer() {
+  if (!state.webhook || probing) { renderNet(); return; }
+  if (!navigator.onLine) { srvState = "offline"; renderNet(); return; }
+  probing = true;
+  // WebhookへのGETは投稿にならない読み取り専用の到達確認
+  fetch(state.webhook, { method: "GET" }).then(function (res) {
+    srvState = res ? "online" : "offline";
+  }).catch(function () {
+    srvState = "offline";
+  }).then(function () {
+    probing = false; renderNet();
+  });
+}
+setInterval(probeServer, 30000);
+document.addEventListener("visibilitychange", function () {
+  if (!document.hidden) probeServer();
+});
+function syncNow() {
+  if (syncing || !navigator.onLine || !state.webhook) { renderNet(); return; }
+  var pend = state.txs.filter(function (tx) { return !tx.synced; });
+  if (!pend.length) { renderNet(); return; }
+  syncing = true;
+  var chain = Promise.resolve();
+  pend.forEach(function (tx) {
+    chain = chain.then(function () {
+      var msg = "🧾 会計 " + tx.time + "　" + txDesc(tx) + "　合計 " + yen(tx.total) +
+                "\n本日累計: " + soldCount() + "部 / " + yen(soldTotal());
+      return fetch(state.webhook, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: msg })
+      }).then(function (res) {
+        if (res.ok) { tx.synced = true; srvState = "online"; save(); }
+        else { srvState = "offline"; }
+      }).catch(function () { /* 失敗したら未送信のまま次回リトライ */
+        srvState = "offline";
+      });
+    });
+  });
+  chain.then(function () { syncing = false; render(); });
+}
+window.addEventListener("online", function () { renderNet(); probeServer(); syncNow(); });
+window.addEventListener("offline", function () { srvState = "offline"; renderNet(); });
+
+// ===== ズーム防止（ダブルタップ／ピンチ） =====
+document.addEventListener("gesturestart", function (e) { e.preventDefault(); });
+document.addEventListener("gesturechange", function (e) { e.preventDefault(); });
+var lastTouchEnd = 0;
+document.addEventListener("touchend", function (e) {
+  // ボタン等の操作要素は対象外（preventDefaultすると click が飛ばず「ボタンが効かない」原因になるため）
+  if (e.target && e.target.closest && e.target.closest("button, input, select, textarea, a")) return;
+  var now = Date.now();
+  if (now - lastTouchEnd <= 350) { e.preventDefault(); }
+  lastTouchEnd = now;
+}, { passive: false });
+document.addEventListener("dblclick", function (e) { e.preventDefault(); });
+
+// ===== 描画 =====
+function render() {
+  var wrap = document.getElementById("items");
+  wrap.innerHTML = "";
+  ITEMS.forEach(function (it) {
+    var div = document.createElement("div");
+    div.className = "item";
+    div.innerHTML =
+      '<div class="info"><div class="name"></div><div class="price"></div></div>' +
+      '<div class="qty"><button data-act="dec">−</button><div class="n"></div><button data-act="inc">＋</button></div>';
+    div.querySelector(".name").textContent = it.name;
+    div.querySelector(".price").textContent = yen(it.price);
+    div.querySelector(".n").textContent = cart[it.id] || 0;
+    div.querySelector('[data-act="inc"]').addEventListener("click", function () {
+      cart[it.id] = (cart[it.id] || 0) + 1; render();
+    });
+    div.querySelector('[data-act="dec"]').addEventListener("click", function () {
+      cart[it.id] = Math.max(0, (cart[it.id] || 0) - 1); render();
+    });
+    wrap.appendChild(div);
+  });
+  var tw = document.getElementById("tender");
+  tw.innerHTML = "";
+  TENDERS.forEach(function (v) {
+    var b = document.createElement("button");
+    b.textContent = v.toLocaleString("ja-JP");
+    b.addEventListener("click", function () { tender += v; render(); });
+    tw.appendChild(b);
+  });
+  var bc = document.createElement("button");
+  bc.textContent = "預かりクリア";
+  bc.addEventListener("click", function () { tender = 0; render(); });
+  tw.appendChild(bc);
+
+  var total = cartTotal();
+  document.getElementById("sumTotal").textContent = yen(total);
+  document.getElementById("sumTender").textContent = yen(tender);
+  var change = tender - total;
+  document.getElementById("sumChange").textContent = total > 0 && tender > 0 ? yen(Math.max(0, change)) : "¥0";
+  document.getElementById("btnCheckout").disabled = !(total > 0 && tender >= total);
+  document.getElementById("stCount").textContent = soldCount();
+  document.getElementById("stSales").textContent = yen(soldTotal());
+  document.getElementById("stStock").textContent = state.stock == null ? "-" : (state.stock - soldCount());
+
+  // 履歴（新しい順・編集/削除つき）
+  var list = document.getElementById("txList");
+  list.innerHTML = "";
+  state.txs.slice().reverse().forEach(function (tx) {
+    var div = document.createElement("div");
+    div.className = "tx";
+    var row = document.createElement("div");
+    row.className = "row";
+    var left = document.createElement("span");
+    left.textContent = txDesc(tx);
+    var meta = document.createElement("span");
+    meta.className = "meta";
+    meta.textContent = tx.time + " / " + yen(tx.total);
+    if (state.webhook) {
+      var sy = document.createElement("span");
+      sy.className = "sync";
+      sy.textContent = tx.synced ? "送信済" : "未送信";
+      meta.appendChild(sy);
+    }
+    row.appendChild(left); row.appendChild(meta);
+    var ops = document.createElement("div");
+    ops.className = "ops";
+    var bEdit = document.createElement("button");
+    bEdit.textContent = "編集";
+    bEdit.addEventListener("click", function () { editTx(tx.id); });
+    var bDel = document.createElement("button");
+    bDel.textContent = "削除";
+    bDel.className = "del";
+    bDel.addEventListener("click", function () { deleteTx(tx.id); });
+    ops.appendChild(bEdit); ops.appendChild(bDel);
+    div.appendChild(row); div.appendChild(ops);
+    list.appendChild(div);
+  });
+  renderNet();
+}
+
+// ===== 会計の削除 / 修正 =====
+function deleteTx(id) {
+  var tx = state.txs.find(function (t) { return t.id === id; });
+  if (!tx) return;
+  if (!confirm("この会計を削除しますか？\n" + tx.time + " " + txDesc(tx) + " " + yen(tx.total))) return;
+  state.txs = state.txs.filter(function (t) { return t.id !== id; });
+  save(); render();
+}
+function editTx(id) {
+  var tx = state.txs.find(function (t) { return t.id === id; });
+  if (!tx) return;
+  if (cartCount() > 0 && !confirm("いまのカート内容を破棄して、この会計を編集しますか？")) return;
+  if (!confirm("この会計をカートに戻して編集します。\n元の記録は消えるので、直したら必ず「会計する」を押してください。")) return;
+  cart = {};
+  tx.lines.forEach(function (l) { cart[l.id] = l.qty; });
+  tender = tx.tender || tx.total;
+  state.txs = state.txs.filter(function (t) { return t.id !== id; });
+  save(); render();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+// ===== ボタン類 =====
+document.getElementById("btnClear").addEventListener("click", function () {
+  cart = {}; tender = 0; render();
+});
+document.getElementById("btnCheckout").addEventListener("click", function () {
+  var lines = ITEMS.filter(function (it) { return (cart[it.id] || 0) > 0; })
+    .map(function (it) { return { id: it.id, name: it.name, price: it.price, qty: cart[it.id] }; });
+  if (!lines.length) return;
+  var now = new Date();
+  var hh = String(now.getHours()).padStart(2, "0"), mm = String(now.getMinutes()).padStart(2, "0");
+  seq += 1;
+  state.txs.push({
+    id: "tx" + Date.now() + "_" + seq,
+    time: hh + ":" + mm, lines: lines, count: cartCount(),
+    total: cartTotal(), tender: tender, change: tender - cartTotal(), synced: false
+  });
+  save();
+  cart = {}; tender = 0; render();
+  syncNow();
+});
+document.getElementById("btnUndo").addEventListener("click", function () {
+  if (!state.txs.length) return;
+  if (!confirm("直前の会計を取り消しますか？")) return;
+  state.txs.pop(); save(); render();
+});
+document.getElementById("btnStock").addEventListener("click", function () {
+  var v = prompt("当日の持込在庫数（印刷部数から見本・予備を引いた数）", state.stock == null ? "" : state.stock);
+  if (v === null) return;
+  var n = parseInt(v, 10);
+  if (!isNaN(n) && n >= 0) { state.stock = n; save(); render(); }
+});
+document.getElementById("btnSync").addEventListener("click", function () {
+  if (!state.webhook) { alert("先にWebhook URLを設定してください（下の設定欄）"); return; }
+  if (!navigator.onLine) { alert("いまはオフラインです。オンライン復帰時に自動送信されます"); return; }
+  syncNow();
+});
+document.getElementById("btnCsv").addEventListener("click", function () {
+  var rows = ["時刻,内容,数量,金額"];
+  state.txs.forEach(function (tx) {
+    tx.lines.forEach(function (l) {
+      rows.push(tx.time + "," + l.name + "," + l.qty + "," + (l.price * l.qty));
+    });
+  });
+  var csvText = "\uFEFF" + rows.join("\n");
+  var blob = new Blob([csvText], { type: "text/csv" });
+  // iOS Safariは download 属性が効かないため、共有シート（ファイル共有）を優先する
+  if (navigator.share) {
+    var file = null;
+    try { file = new File([blob], "comiket_register.csv", { type: "text/csv" }); } catch (e) {}
+    if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file] }).catch(function () {});
+      return;
+    }
+  }
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "comiket_register.csv";
+  a.click();
+  setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
+});
+document.getElementById("btnSummary").addEventListener("click", function () {
+  var text = "【コミケ当日 集計】\n" +
+    ITEMS.map(function (it) { return it.name + ": " + soldByItem(it.id) + "部"; }).join("\n") +
+    "\n販売数合計: " + soldCount() + "部\n売上合計: " + yen(soldTotal()) +
+    "\n残り在庫: " + (state.stock == null ? "-" : (state.stock - soldCount()) + "部");
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function () { alert("集計をコピーしました"); });
+  } else {
+    prompt("コピーしてください", text);
+  }
+});
+document.getElementById("btnReset").addEventListener("click", function () {
+  if (!confirm("全ての会計データを消去しますか？（元に戻せません）")) return;
+  state = { txs: [], stock: state.stock, webhook: state.webhook };
+  save(); cart = {}; tender = 0; render();
+});
+document.getElementById("btnWhSave").addEventListener("click", function () {
+  var v = document.getElementById("whInput").value.trim();
+  if (v && v.indexOf("https://discord.com/api/webhooks/") !== 0 && v.indexOf("https://discordapp.com/api/webhooks/") !== 0) {
+    if (!confirm("DiscordのWebhook URLの形式と違いますが、このまま保存しますか？")) return;
+  }
+  state.webhook = v;
+  save(); render();
+  alert(v ? "Webhookを保存しました" : "Webhookを消去しました");
+  syncNow();
+});
+
+document.getElementById("whInput").value = state.webhook || "";
+render();
+var jsEl = document.getElementById("jsStatus");
+if (jsEl) jsEl.textContent = "スクリプト: 動作OK（iOS Safari対応版）";
+probeServer();
+syncNow();
+</script>
+</body>
+</html>
